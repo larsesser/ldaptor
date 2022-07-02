@@ -1,7 +1,11 @@
 """LDAP protocol server"""
+import asyncio
+from asyncio.transports import Transport
 
 from ldaptor import interfaces, delta
 from ldaptor.protocols import pureldap, pureber
+from ldaptor.protocols.pureldap import LDAPMessage, LDAPExtendedResponse
+from ldaptor.protocols.ldap.ldaperrors import LDAPException, LDAPProtocolError
 from ldaptor.protocols.ldap import distinguishedname, ldaperrors
 from twisted.python import log
 from twisted.internet import protocol, defer
@@ -11,12 +15,13 @@ class LDAPServerConnectionLostException(ldaperrors.LDAPException):
     pass
 
 
-class BaseLDAPServer(protocol.Protocol):
+class BaseLdapServer(asyncio.Protocol):
     debug = False
 
     def __init__(self):
         self.buffer = b""
-        self.connected = None
+        self.connected = False
+        self.transport: Transport = None
 
     berdecoder = pureldap.LDAPBERDecoderContext_TopLevel(
         inherit=pureldap.LDAPBERDecoderContext_LDAPMessage(
@@ -29,8 +34,18 @@ class BaseLDAPServer(protocol.Protocol):
         )
     )
 
-    def dataReceived(self, recd):
-        self.buffer += recd
+    def connection_made(self, transport: Transport) -> None:
+        self.connected = True
+        assert isinstance(transport, Transport)
+        self.transport = transport
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        # TODO maybe handle the exception or proper close the connection
+        self.connected = False
+        self.transport.close()
+
+    def data_received(self, data: bytes) -> None:
+        self.buffer += data
         while 1:
             try:
                 o, bytes = pureber.berDecodeObject(self.berdecoder, self.buffer)
@@ -39,20 +54,15 @@ class BaseLDAPServer(protocol.Protocol):
             self.buffer = self.buffer[bytes:]
             if o is None:
                 break
+            # TODO this is some very obscure code path, related to the construction of
+            #  the berdecoder object...
+            assert isinstance(o, LDAPMessage)
             self.handle(o)
 
-    def connectionMade(self):
-        """TCP connection has opened"""
-        self.connected = 1
-
-    def connectionLost(self, reason=protocol.connectionDone):
-        """Called when TCP connection has been lost"""
-        self.connected = 0
-
-    def queue(self, id, op):
+    def queue(self, msg_id: int, op: LDAPExtendedResponse):
         if not self.connected:
             raise LDAPServerConnectionLostException()
-        msg = pureldap.LDAPMessage(op, id=id)
+        msg = pureldap.LDAPMessage(op, id=msg_id)
         if self.debug:
             log.msg("S->C %s" % repr(msg), debug=True)
         self.transport.write(msg.toWire())
@@ -77,14 +87,6 @@ class BaseLDAPServer(protocol.Protocol):
         )
         return msg
 
-    def _cbLDAPError(self, reason, name):
-        reason.trap(ldaperrors.LDAPException)
-        return self._callErrorHandler(
-            name=name,
-            resultCode=reason.value.resultCode,
-            errorMessage=reason.value.message,
-        )
-
     def _cbHandle(self, response, id):
         if response is not None:
             self.queue(id, response)
@@ -96,18 +98,7 @@ class BaseLDAPServer(protocol.Protocol):
             errorMessage=errorMessage,
         )
 
-    def _callErrorHandler(self, name, resultCode, errorMessage):
-        errh = getattr(self, "fail_" + name, self.failDefault)
-        return errh(resultCode=resultCode, errorMessage=errorMessage)
-
-    def _cbOtherError(self, reason, name):
-        return self._callErrorHandler(
-            name=name,
-            resultCode=ldaperrors.LDAPProtocolError.resultCode,
-            errorMessage=reason.getErrorMessage(),
-        )
-
-    def handle(self, msg):
+    def handle(self, msg: LDAPMessage):
         assert isinstance(msg.value, pureldap.LDAPProtocolRequest)
         if self.debug:
             log.msg("S<-C %s" % repr(msg), debug=True)
@@ -117,16 +108,19 @@ class BaseLDAPServer(protocol.Protocol):
         else:
             name = msg.value.__class__.__name__
             handler = getattr(self, "handle_" + name, self.handleUnknown)
-            d = defer.maybeDeferred(
-                handler,
-                msg.value,
-                msg.controls,
-                lambda response: self._cbHandle(response, msg.id),
-            )
-            d.addErrback(self._cbLDAPError, name)
-            d.addErrback(defer.logError)
-            d.addErrback(self._cbOtherError, name)
-            d.addCallback(self._cbHandle, msg.id)
+            error_handler = getattr(self, "fail_" + name, self.failDefault)
+            try:
+                response = handler(
+                    msg.value,
+                    msg.controls,
+                    lambda response: self._cbHandle(response, msg.id),
+                )
+            except LDAPException as e:
+                # TODO do logging
+                response = error_handler(e.resultCode, e.message)
+            except Exception as e:
+                response = error_handler(LDAPProtocolError.resultCode, str(e))
+            self.queue(msg.id, response)
 
 
 class LDAPServer(BaseLDAPServer):
