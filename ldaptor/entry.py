@@ -175,7 +175,7 @@ class LdapEntry(abc.ABC):
         else:
             raise LDAPProtocolError("unknown search scope: %r" % scope)
 
-        return [entry for entry in entries if entry.match(filter_object)]
+        return [entry for entry in entries if await entry.match(filter_object)]
 
 
 @implementer(interfaces.ILDAPEntry)

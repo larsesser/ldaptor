@@ -1,12 +1,17 @@
 """LDAP protocol server"""
 import asyncio
 from asyncio.transports import Transport
-from typing import Optional, Callable
+from typing import Optional, Callable, Coroutine
 
 from ldaptor import interfaces, delta
 from ldaptor.entry import LdapEntry
 from ldaptor.protocols import pureldap, pureber
-from ldaptor.protocols.pureldap import LDAPMessage, LDAPExtendedResponse
+from ldaptor.protocols.pureldap import (
+    LDAPMessage,
+    LDAPProtocolRequest,
+    LDAPControls,
+    LDAPProtocolResponse,
+)
 from ldaptor.protocols.ldap.ldaperrors import LDAPException, LDAPProtocolError
 from ldaptor.protocols.ldap import distinguishedname, ldaperrors
 from twisted.python import log
@@ -61,7 +66,7 @@ class BaseLdapServer(asyncio.Protocol):
             # TODO this is some very obscure code path, related to the construction of
             #  the berdecoder object...
             assert isinstance(o, LDAPMessage)
-            self.handle(o)
+            asyncio.create_task(self.handle(o))
 
     def queue(self, msg_id: int, op: pureldap.LDAPProtocolResponse) -> None:
         if not self.connected:
@@ -82,7 +87,7 @@ class BaseLdapServer(asyncio.Protocol):
                         b"Unknown control %s" % controlType
                     )
 
-    def handleUnknown(
+    async def handleUnknown(
         self,
         request: pureldap.LDAPProtocolRequest,
         controls: Optional[pureldap.LDAPControls],
@@ -96,7 +101,7 @@ class BaseLdapServer(asyncio.Protocol):
         )
         reply(msg)
 
-    def failDefault(
+    def fail_default(
         self, resultCode: int, errorMessage: str
     ) -> pureldap.LDAPProtocolResponse:
         return pureldap.LDAPExtendedResponse(
@@ -105,7 +110,7 @@ class BaseLdapServer(asyncio.Protocol):
             errorMessage=errorMessage,
         )
 
-    def handle(self, msg: LDAPMessage):
+    async def handle(self, msg: LDAPMessage):
         assert isinstance(msg.value, pureldap.LDAPProtocolRequest)
         if self.debug:
             log.msg("S<-C %s" % repr(msg), debug=True)
@@ -114,24 +119,25 @@ class BaseLdapServer(asyncio.Protocol):
             self.unsolicitedNotification(msg.value)
         else:
             name = msg.value.__class__.__name__
-            handler = getattr(self, "handle_" + name, self.handleUnknown)
-            error_handler = getattr(self, "fail_" + name, self.failDefault)
+            handler: Callable[
+                [LDAPProtocolRequest, Optional[LDAPControls], ReplyCallback],
+                Coroutine[None],
+            ]
+            handler = getattr(self, "handle_" + name, self.handle_unknown)
+            error_handler: Callable[[int, str], LDAPProtocolResponse]
+            error_handler = getattr(self, "fail_" + name, self.fail_default)
             try:
-                handler(
+                await handler(
                     msg.value,
                     msg.controls,
                     lambda response: self.queue(msg.id, response),
                 )
             except LDAPException as e:
                 # TODO do logging
-                response = error_handler(
-                    resultCode=e.resultCode, errorMessage=e.message
-                )
+                response = error_handler(e.resultCode, e.message)
                 self.queue(msg.id, response)
             except Exception as e:
-                response = error_handler(
-                    resultCode=LDAPProtocolError.resultCode, errorMessage=str(e)
-                )
+                response = error_handler(LDAPProtocolError.resultCode, str(e))
                 self.queue(msg.id, response)
 
 
@@ -142,7 +148,7 @@ class LdapServer(BaseLdapServer):
 
     fail_LDAPBindRequest = pureldap.LDAPBindResponse
 
-    def handle_LDAPBindRequest(
+    async def handle_LDAPBindRequest(
         self,
         request: pureldap.LDAPBindRequest,
         controls: Optional[pureldap.LDAPControls],
@@ -168,7 +174,7 @@ class LdapServer(BaseLdapServer):
         except ldaperrors.LDAPNoSuchObject:
             raise ldaperrors.LDAPInvalidCredentials
 
-        entry.bind(request.auth)
+        await entry.bind(request.auth)
         self.boundUser = entry
 
         msg = pureldap.LDAPBindResponse(
@@ -176,7 +182,7 @@ class LdapServer(BaseLdapServer):
         )
         reply(msg)
 
-    def handle_LDAPUnbindRequest(
+    async def handle_LDAPUnbindRequest(
         self,
         request: pureldap.LDAPUnbindRequest,
         controls: Optional[pureldap.LDAPControls],
@@ -188,7 +194,7 @@ class LdapServer(BaseLdapServer):
 
     fail_LDAPCompareRequest = pureldap.LDAPCompareResponse
 
-    def handle_LDAPCompareRequest(
+    async def handle_LDAPCompareRequest(
         self,
         request: pureldap.LDAPCompareRequest,
         controls: Optional[pureldap.LDAPControls],
@@ -219,7 +225,7 @@ class LdapServer(BaseLdapServer):
 
     fail_LDAPSearchRequest = pureldap.LDAPSearchResultDone
 
-    def handle_LDAPSearchRequest(
+    async def handle_LDAPSearchRequest(
         self,
         request: pureldap.LDAPSearchRequest,
         controls: Optional[pureldap.LDAPControls],
