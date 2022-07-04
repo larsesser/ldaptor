@@ -188,52 +188,34 @@ class LdapServer(BaseLdapServer):
 
     fail_LDAPCompareRequest = pureldap.LDAPCompareResponse
 
-    def handle_LDAPCompareRequest(self, request, controls, reply):
-        def _cbCompareGotBase(base, ava, reply):
-            def _done(result_list):
-                if result_list:
-                    resultCode = ldaperrors.LDAPCompareTrue.resultCode
-                else:
-                    resultCode = ldaperrors.LDAPCompareFalse.resultCode
-                return pureldap.LDAPCompareResponse(resultCode)
-
-            # base.search only works with Filter Objects, and not with
-            # AttributeValueAssertion objects. Here we convert the AVA to an
-            # equivalent Filter so we can re-use the existing search
-            # functionality we require.
-            search_filter = pureldap.LDAPFilter_equalityMatch(
-                attributeDesc=ava.attributeDesc, assertionValue=ava.assertionValue
-            )
-
-            d = base.search(
-                filterObject=search_filter,
-                scope=pureldap.LDAP_SCOPE_baseObject,
-                derefAliases=pureldap.LDAP_DEREF_neverDerefAliases,
-            )
-
-            d.addCallback(_done)
-
-            return d
-
-        def _cbCompareLDAPError(reason):
-            reason.trap(ldaperrors.LDAPException)
-            return pureldap.LDAPCompareResponse(resultCode=reason.value.resultCode)
-
-        def _cbCompareOtherError(reason):
-            return pureldap.LDAPCompareResponse(
-                resultCode=ldaperrors.other, errorMessage=reason.getErrorMessage()
-            )
-
+    def handle_LDAPCompareRequest(
+        self,
+        request: pureldap.LDAPCompareRequest,
+        controls: Optional[pureldap.LDAPControls],
+        reply: ReplyCallback,
+    ) -> None:
         self.checkControls(controls)
         dn = distinguishedname.DistinguishedName(request.entry)
-        root = interfaces.IConnectedLDAPEntry(self.factory)
+        base = await self.root.lookup(dn)
 
-        d = root.lookup(dn)
-        d.addCallback(_cbCompareGotBase, request.ava, reply)
-        d.addErrback(_cbCompareLDAPError)
-        d.addErrback(defer.logError)
-        d.addErrback(_cbCompareOtherError)
-        return d
+        # base.search only works with Filter Objects, and not with
+        # AttributeValueAssertion objects. Here we convert the AVA to an
+        # equivalent Filter so we can re-use the existing search
+        # functionality we require.
+        search_filter = pureldap.LDAPFilter_equalityMatch(
+            attributeDesc=request.ava.attributeDesc,
+            assertionValue=request.ava.assertionValue,
+        )
+        search_results = await base.search(
+            filterObject=search_filter,
+            scope=pureldap.LDAP_SCOPE_baseObject,
+            derefAliases=pureldap.LDAP_DEREF_neverDerefAliases,
+        )
+        if search_results:
+            reply(pureldap.LDAPCompareResponse(ldaperrors.LDAPCompareTrue.resultCode))
+        else:
+            reply(pureldap.LDAPCompareResponse(ldaperrors.LDAPCompareFalse.resultCode))
+        return None
 
     fail_LDAPSearchRequest = pureldap.LDAPSearchResultDone
 
