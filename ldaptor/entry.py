@@ -1,5 +1,7 @@
+import abc
 import base64
 import random
+from typing import Collection, Dict
 
 
 from twisted.internet import defer
@@ -9,6 +11,8 @@ from zope.interface import implementer
 from ldaptor import interfaces, attributeset, delta
 from ldaptor._encoder import WireStrAlias, to_bytes, get_strings
 from ldaptor.protocols.ldap import distinguishedname, ldif, ldaperrors
+from ldaptor.protocols.ldap.distinguishedname import DistinguishedName
+from ldaptor.attributeset import LDAPAttributeSet
 
 from hashlib import sha1
 
@@ -29,6 +33,108 @@ def sshaDigest(passphrase, salt=None):
     encoded = base64.encodebytes(s.digest() + salt).rstrip()
     crypt = b"{SSHA}" + encoded
     return crypt
+
+
+class LdapEntry(abc.ABC):
+    dn: DistinguishedName = None
+    attributes: Dict[bytes, LDAPAttributeSet] = None
+
+    def __init__(
+        self, dn: DistinguishedName, attributes: Dict[bytes, Collection[bytes]]
+    ) -> None:
+        self.dn = dn
+        # TODO replace with a dict implementation with case-insensitive keys
+        self.attributes = dict()
+        for attribute, values in attributes.items():
+            self.attributes[attribute] = LDAPAttributeSet(attribute, values)
+
+    def __getitem__(self, key: bytes):
+        return self.attributes.__getitem__(key)
+
+    def __contains__(self, key: bytes):
+        return self.attributes.__contains__(key)
+
+    def __iter__(self):
+        return self.attributes.__iter__()
+
+    def keys(self):
+        return self.attributes.keys()
+
+    def values(self):
+        return self.attributes.values()
+
+    def items(self):
+        return self.attributes.items()
+
+    def __eq__(self, other):
+        if not isinstance(other, LdapEntry):
+            return NotImplemented
+        if self.dn != other.dn:
+            return False
+
+        my_keys = sorted(self.keys())
+        others_keys = sorted(other.keys())
+
+        if my_keys != others_keys:
+            return False
+        for key in my_keys:
+            if self[key] != other[key]:
+                return False
+        return True
+
+    def __ne__(self, other):
+        return not self == other
+
+    def __len__(self):
+        return self.attributes.__len__()
+
+    # TODO which return type?
+    @abc.abstractmethod
+    async def bind(self, password: bytes) -> None:
+        """Try to bind with the given password to this entry.
+
+        :raises LDAPInvalidCredentials if the given passwort does not match.
+        """
+
+    # TODO which attributes type? which return type?
+    @abc.abstractmethod
+    async def fetch(self, attributes: Collection[bytes] = None) -> LDAPAttributeSet:
+        """Fetch the given attributes of this object from the server.
+
+        If attributes is None, all attributes shall be fetched.
+        """
+
+    @abc.abstractmethod
+    async def children(self) -> Collection["LdapEntry"]:
+        """List the direct children of this entry."""
+
+    @abc.abstractmethod
+    async def lookup(self, dn: DistinguishedName) -> "LdapEntry":
+        """Lookup the given dn.
+
+        :raises LDAPNoSuchObject if the given dn is not in the subtree of this dn.
+        """
+
+    # TODO filter type
+    async def match(self, filter) -> bool:
+        """Does this entry matches the given filter?"""
+
+    async def subtree(self) -> Collection["LdapEntry"]:
+        """List the subtree rooted at this entry, including this entry."""
+
+    # TODO
+    async def search(
+        self,
+        filterText=None,
+        filterObject=None,
+        attributes=(),
+        scope=None,
+        derefAliases=None,
+        sizeLimit=0,
+        timeLimit=0,
+        typesOnly=0,
+    ) -> Collection["LdapEntry"]:
+        """Apply a search operation, rooted at this entry."""
 
 
 @implementer(interfaces.ILDAPEntry)

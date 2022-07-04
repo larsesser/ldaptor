@@ -1,10 +1,8 @@
 from copy import deepcopy
 
-from ldaptor._encoder import get_strings
-
 
 class LDAPAttributeSet(set):
-    def __init__(self, key, *a, **kw):
+    def __init__(self, key: bytes, *a, **kw):
         """
         Represents all the values for an attribute in an LDAP entry. An entry
         might have "cn" or "objectClass" or "uid" attributes, and this class
@@ -16,7 +14,6 @@ class LDAPAttributeSet(set):
         You can find the values of the LDAP attribute by casting this to a
         ``list``.
         @param key: the key of the attribute, eg "uid".
-        @type key: str
         @param args: set of values for this attribute, eg. "jsmith"
         """
         self.key = key
@@ -47,28 +44,11 @@ class LDAPAttributeSet(set):
     def __ne__(self, other):
         return not self == other
 
-    def add(self, key):
-        """
-        Adding key to the attributes with checking
-        if it exists as byte or unicode string
-        """
-        for k in get_strings(key):
-            if k in self:
-                return
+    def add(self, key: bytes):
+        super().add(key)
 
-        set.add(self, key)
-
-    def remove(self, key):
-        """
-        Removing key from the attributes with checking
-        if it exists as byte or unicode string
-        """
-        for k in get_strings(key):
-            if k in self:
-                set.remove(self, k)
-                return
-
-        raise KeyError(key)
+    def remove(self, key: bytes):
+        super().remove(key)
 
     def copy(self):
         result = self.__class__(self.key)
