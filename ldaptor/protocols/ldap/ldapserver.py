@@ -135,14 +135,19 @@ class BaseLdapServer(asyncio.Protocol):
                 self.queue(msg.id, response)
 
 
-class LDAPServer(BaseLDAPServer):
+class LdapServer(BaseLdapServer):
     """An LDAP server"""
 
-    boundUser = None
+    boundUser: Optional[LdapEntry] = None
 
     fail_LDAPBindRequest = pureldap.LDAPBindResponse
 
-    def handle_LDAPBindRequest(self, request, controls, reply):
+    def handle_LDAPBindRequest(
+        self,
+        request: pureldap.LDAPBindRequest,
+        controls: Optional[pureldap.LDAPControls],
+        reply: ReplyCallback,
+    ) -> None:
         if request.version != 3:
             raise ldaperrors.LDAPProtocolError(
                 "Version %u not supported" % request.version
@@ -153,62 +158,33 @@ class LDAPServer(BaseLDAPServer):
         if request.dn == b"":
             # anonymous bind
             self.boundUser = None
-            return pureldap.LDAPBindResponse(resultCode=0)
-        else:
-            dn = distinguishedname.DistinguishedName(request.dn)
-            root = interfaces.IConnectedLDAPEntry(self.factory)
-            d = root.lookup(dn)
+            reply(pureldap.LDAPBindResponse(resultCode=ldaperrors.Success.resultCode))
+            return
 
-            def _noEntry(fail):
-                fail.trap(ldaperrors.LDAPNoSuchObject)
-                return None
+        dn = distinguishedname.DistinguishedName(request.dn)
 
-            d.addErrback(_noEntry)
+        try:
+            entry = await self.root.lookup(dn)
+        except ldaperrors.LDAPNoSuchObject:
+            raise ldaperrors.LDAPInvalidCredentials
 
-            def _gotEntry(entry, auth):
-                if entry is None:
-                    raise ldaperrors.LDAPInvalidCredentials()
+        entry.bind(request.auth)
+        self.boundUser = entry
 
-                d = entry.bind(auth)
+        msg = pureldap.LDAPBindResponse(
+            resultCode=ldaperrors.Success.resultCode, matchedDN=entry.dn.getText()
+        )
+        reply(msg)
 
-                def _cb(entry):
-                    self.boundUser = entry
-                    msg = pureldap.LDAPBindResponse(
-                        resultCode=ldaperrors.Success.resultCode,
-                        matchedDN=entry.dn.getText(),
-                    )
-                    return msg
-
-                d.addCallback(_cb)
-                return d
-
-            d.addCallback(_gotEntry, request.auth)
-
-            return d
-
-    def handle_LDAPUnbindRequest(self, request, controls, reply):
+    def handle_LDAPUnbindRequest(
+        self,
+        request: pureldap.LDAPUnbindRequest,
+        controls: Optional[pureldap.LDAPControls],
+        reply: ReplyCallback,
+    ) -> None:
         # explicitly do not check unsupported critical controls -- we
         # have no way to return an error, anyway.
-        self.transport.loseConnection()
-
-    def getRootDSE(self, request, reply):
-        root = interfaces.IConnectedLDAPEntry(self.factory)
-        reply(
-            pureldap.LDAPSearchResultEntry(
-                objectName="",
-                attributes=[
-                    ("supportedLDAPVersion", ["3"]),
-                    ("namingContexts", [root.dn.getText()]),
-                    (
-                        "supportedExtension",
-                        [
-                            pureldap.LDAPPasswordModifyRequest.oid,
-                        ],
-                    ),
-                ],
-            )
-        )
-        return pureldap.LDAPSearchResultDone(resultCode=ldaperrors.Success.resultCode)
+        self.connection_lost(None)
 
     fail_LDAPCompareRequest = pureldap.LDAPCompareResponse
 
@@ -259,23 +235,39 @@ class LDAPServer(BaseLDAPServer):
         d.addErrback(_cbCompareOtherError)
         return d
 
-    def _cbSearchGotBase(self, base, dn, request, reply):
-        def _sendEntryToClient(entry):
-            requested_attribs = request.attributes
-            if len(requested_attribs) > 0 and b"*" not in requested_attribs:
-                filtered_attribs = [
-                    (k, entry.get(k)) for k in requested_attribs if k in entry
-                ]
-            else:
-                filtered_attribs = entry.items()
-            reply(
-                pureldap.LDAPSearchResultEntry(
-                    objectName=entry.dn.getText(),
-                    attributes=filtered_attribs,
-                )
-            )
+    fail_LDAPSearchRequest = pureldap.LDAPSearchResultDone
 
-        d = base.search(
+    def handle_LDAPSearchRequest(
+        self,
+        request: pureldap.LDAPSearchRequest,
+        controls: Optional[pureldap.LDAPControls],
+        reply: ReplyCallback,
+    ) -> None:
+        self.checkControls(controls)
+        base_dn = distinguishedname.DistinguishedName(request.baseObject)
+
+        # short-circuit if the requested entry is the root entry
+        # TODO: check that the root entry has attributes like supportedLDAPVersion,
+        #  namingContexts, supportedExtension, subschemaName ...
+        if (
+            request.baseObject == b""
+            and request.scope == pureldap.LDAP_SCOPE_baseObject
+            and request.filter == pureldap.LDAPFilter_present("objectClass")
+        ):
+            # prepare the attributes of the root entry as they are expected
+            attributes = await self.root.fetch()
+            msg = pureldap.LDAPSearchResultEntry(
+                objectName=self.root.dn.getText(), attributes=attributes
+            )
+            reply(msg)
+            msg = pureldap.LDAPSearchResultDone(
+                resultCode=ldaperrors.Success.resultCode
+            )
+            reply(msg)
+            return None
+
+        base = await self.root.lookup(base_dn)
+        search_results = await base.search(
             filterObject=request.filter,
             attributes=request.attributes,
             scope=request.scope,
@@ -283,45 +275,21 @@ class LDAPServer(BaseLDAPServer):
             sizeLimit=request.sizeLimit,
             timeLimit=request.timeLimit,
             typesOnly=request.typesOnly,
-            callback=_sendEntryToClient,
         )
 
-        def _done(_):
-            return pureldap.LDAPSearchResultDone(
-                resultCode=ldaperrors.Success.resultCode
+        for entry in search_results:
+            if len(request.attributes) > 0 and b"*" not in request.attributes:
+                attributes = [(k, entry[k]) for k in request.attributes if k in entry]
+            else:
+                attributes = list(entry.items())
+            msg = pureldap.LDAPSearchResultEntry(
+                objectName=entry.dn.getText(), attributes=attributes
             )
+            reply(msg)
 
-        d.addCallback(_done)
-        return d
-
-    def _cbSearchLDAPError(self, reason):
-        reason.trap(ldaperrors.LDAPException)
-        return pureldap.LDAPSearchResultDone(resultCode=reason.value.resultCode)
-
-    def _cbSearchOtherError(self, reason):
-        return pureldap.LDAPSearchResultDone(
-            resultCode=ldaperrors.other, errorMessage=reason.getErrorMessage()
-        )
-
-    fail_LDAPSearchRequest = pureldap.LDAPSearchResultDone
-
-    def handle_LDAPSearchRequest(self, request, controls, reply):
-        self.checkControls(controls)
-
-        if (
-            request.baseObject == b""
-            and request.scope == pureldap.LDAP_SCOPE_baseObject
-            and request.filter == pureldap.LDAPFilter_present("objectClass")
-        ):
-            return self.getRootDSE(request, reply)
-        dn = distinguishedname.DistinguishedName(request.baseObject)
-        root = interfaces.IConnectedLDAPEntry(self.factory)
-        d = root.lookup(dn)
-        d.addCallback(self._cbSearchGotBase, dn, request, reply)
-        d.addErrback(self._cbSearchLDAPError)
-        d.addErrback(defer.logError)
-        d.addErrback(self._cbSearchOtherError)
-        return d
+        msg = pureldap.LDAPSearchResultDone(resultCode=ldaperrors.Success.resultCode)
+        reply(msg)
+        return None
 
     fail_LDAPDelRequest = pureldap.LDAPDelResponse
 
