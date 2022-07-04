@@ -1,8 +1,10 @@
 """LDAP protocol server"""
 import asyncio
 from asyncio.transports import Transport
+from typing import Optional, Callable
 
 from ldaptor import interfaces, delta
+from ldaptor.entry import LdapEntry
 from ldaptor.protocols import pureldap, pureber
 from ldaptor.protocols.pureldap import LDAPMessage, LDAPExtendedResponse
 from ldaptor.protocols.ldap.ldaperrors import LDAPException, LDAPProtocolError
@@ -10,18 +12,20 @@ from ldaptor.protocols.ldap import distinguishedname, ldaperrors
 from twisted.python import log
 from twisted.internet import protocol, defer
 
+ReplyCallback = Callable[[pureldap.LDAPProtocolResponse], None]
+
 
 class LDAPServerConnectionLostException(ldaperrors.LDAPException):
     pass
 
 
 class BaseLdapServer(asyncio.Protocol):
-    debug = False
-
-    def __init__(self):
+    def __init__(self, root: LdapEntry, *, debug: bool = False):
         self.buffer = b""
         self.connected = False
         self.transport: Transport = None
+        self.root = root
+        self.debug = debug
 
     berdecoder = pureldap.LDAPBERDecoderContext_TopLevel(
         inherit=pureldap.LDAPBERDecoderContext_LDAPMessage(
@@ -59,7 +63,7 @@ class BaseLdapServer(asyncio.Protocol):
             assert isinstance(o, LDAPMessage)
             self.handle(o)
 
-    def queue(self, msg_id: int, op: LDAPExtendedResponse):
+    def queue(self, msg_id: int, op: pureldap.LDAPProtocolResponse) -> None:
         if not self.connected:
             raise LDAPServerConnectionLostException()
         msg = pureldap.LDAPMessage(op, id=msg_id)
@@ -70,7 +74,7 @@ class BaseLdapServer(asyncio.Protocol):
     def unsolicitedNotification(self, msg):
         log.msg("Got unsolicited notification: %s" % repr(msg))
 
-    def checkControls(self, controls):
+    def checkControls(self, controls: Optional[pureldap.LDAPControls]) -> None:
         if controls is not None:
             for controlType, criticality, controlValue in controls:
                 if criticality:
@@ -78,20 +82,23 @@ class BaseLdapServer(asyncio.Protocol):
                         b"Unknown control %s" % controlType
                     )
 
-    def handleUnknown(self, request, controls, callback):
+    def handleUnknown(
+        self,
+        request: pureldap.LDAPProtocolRequest,
+        controls: Optional[pureldap.LDAPControls],
+        reply: ReplyCallback,
+    ) -> None:
         log.msg("Unknown request: %r" % request)
         msg = pureldap.LDAPExtendedResponse(
             resultCode=ldaperrors.LDAPProtocolError.resultCode,
             responseName="1.3.6.1.4.1.1466.20036",
             errorMessage="Unknown request",
         )
-        return msg
+        reply(msg)
 
-    def _cbHandle(self, response, id):
-        if response is not None:
-            self.queue(id, response)
-
-    def failDefault(self, resultCode, errorMessage):
+    def failDefault(
+        self, resultCode: int, errorMessage: str
+    ) -> pureldap.LDAPProtocolResponse:
         return pureldap.LDAPExtendedResponse(
             resultCode=resultCode,
             responseName="1.3.6.1.4.1.1466.20036",
@@ -110,17 +117,22 @@ class BaseLdapServer(asyncio.Protocol):
             handler = getattr(self, "handle_" + name, self.handleUnknown)
             error_handler = getattr(self, "fail_" + name, self.failDefault)
             try:
-                response = handler(
+                handler(
                     msg.value,
                     msg.controls,
-                    lambda response: self._cbHandle(response, msg.id),
+                    lambda response: self.queue(msg.id, response),
                 )
             except LDAPException as e:
                 # TODO do logging
-                response = error_handler(e.resultCode, e.message)
+                response = error_handler(
+                    resultCode=e.resultCode, errorMessage=e.message
+                )
+                self.queue(msg.id, response)
             except Exception as e:
-                response = error_handler(LDAPProtocolError.resultCode, str(e))
-            self.queue(msg.id, response)
+                response = error_handler(
+                    resultCode=LDAPProtocolError.resultCode, errorMessage=str(e)
+                )
+                self.queue(msg.id, response)
 
 
 class LDAPServer(BaseLDAPServer):
