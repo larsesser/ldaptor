@@ -142,8 +142,12 @@ class BaseLdapServer(asyncio.Protocol):
                 self.queue(msg.id, response)
 
 
-class LdapServer(BaseLdapServer):
-    """An LDAP server"""
+class ReadOnlyLdapServer(BaseLdapServer):
+    """A read-only LDAP server.
+
+    This may serve information a (static or dynamic generated) LDAP tree, but does not
+    allow to modify the tree by any meaning.
+    """
 
     boundUser: Optional[LdapEntry] = None
 
@@ -279,6 +283,9 @@ class LdapServer(BaseLdapServer):
         msg = pureldap.LDAPSearchResultDone(resultCode=ldaperrors.Success.resultCode)
         reply(msg)
         return None
+
+
+class LdapServer(ReadOnlyLdapServer):
 
     fail_LDAPDelRequest = pureldap.LDAPDelResponse
 
