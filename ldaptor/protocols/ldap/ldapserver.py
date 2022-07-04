@@ -2,6 +2,7 @@
 import asyncio
 from asyncio.transports import Transport
 from typing import Optional, Callable, Coroutine
+import logging
 
 from ldaptor import interfaces, delta
 from ldaptor.entry import LdapEntry
@@ -14,7 +15,6 @@ from ldaptor.protocols.pureldap import (
 )
 from ldaptor.protocols.ldap.ldaperrors import LDAPException, LDAPProtocolError
 from ldaptor.protocols.ldap import distinguishedname, ldaperrors
-from twisted.python import log
 from twisted.internet import protocol, defer
 
 ReplyCallback = Callable[[pureldap.LDAPProtocolResponse], None]
@@ -24,13 +24,15 @@ class LDAPServerConnectionLostException(ldaperrors.LDAPException):
     pass
 
 
+logger = logging.getLogger(__name__)
+
+
 class BaseLdapServer(asyncio.Protocol):
-    def __init__(self, root: LdapEntry, *, debug: bool = False):
+    def __init__(self, root: LdapEntry):
         self.buffer = b""
         self.connected = False
         self.transport: Transport = None
         self.root = root
-        self.debug = debug
 
     berdecoder = pureldap.LDAPBERDecoderContext_TopLevel(
         inherit=pureldap.LDAPBERDecoderContext_LDAPMessage(
@@ -72,12 +74,11 @@ class BaseLdapServer(asyncio.Protocol):
         if not self.connected:
             raise LDAPServerConnectionLostException()
         msg = pureldap.LDAPMessage(op, id=msg_id)
-        if self.debug:
-            log.msg("S->C %s" % repr(msg), debug=True)
+        logger.debug("S->C %s" % repr(msg))
         self.transport.write(msg.toWire())
 
     def unsolicitedNotification(self, msg):
-        log.msg("Got unsolicited notification: %s" % repr(msg))
+        logger.error("Got unsolicited notification: %s" % repr(msg))
 
     def checkControls(self, controls: Optional[pureldap.LDAPControls]) -> None:
         if controls is not None:
@@ -93,7 +94,7 @@ class BaseLdapServer(asyncio.Protocol):
         controls: Optional[pureldap.LDAPControls],
         reply: ReplyCallback,
     ) -> None:
-        log.msg("Unknown request: %r" % request)
+        logger.error("Unknown request: %r" % request)
         msg = pureldap.LDAPExtendedResponse(
             resultCode=ldaperrors.LDAPProtocolError.resultCode,
             responseName="1.3.6.1.4.1.1466.20036",
@@ -112,8 +113,7 @@ class BaseLdapServer(asyncio.Protocol):
 
     async def handle(self, msg: LDAPMessage):
         assert isinstance(msg.value, pureldap.LDAPProtocolRequest)
-        if self.debug:
-            log.msg("S<-C %s" % repr(msg), debug=True)
+        logger.debug("S<-C %s" % repr(msg))
 
         if msg.id == 0:
             self.unsolicitedNotification(msg.value)
@@ -133,10 +133,11 @@ class BaseLdapServer(asyncio.Protocol):
                     lambda response: self.queue(msg.id, response),
                 )
             except LDAPException as e:
-                # TODO do logging
+                logger.error(f"During handling of {name} (msg.id {msg.id}): {repr(e)}")
                 response = error_handler(e.resultCode, e.message)
                 self.queue(msg.id, response)
             except Exception as e:
+                logger.error(f"During handling of {name} (msg.id {msg.id}): {repr(e)}")
                 response = error_handler(LDAPProtocolError.resultCode, str(e))
                 self.queue(msg.id, response)
 
