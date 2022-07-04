@@ -1,7 +1,7 @@
 import abc
 import base64
 import random
-from typing import Collection, Dict
+from typing import List, Dict, Collection
 
 
 from twisted.internet import defer
@@ -13,6 +13,16 @@ from ldaptor._encoder import WireStrAlias, to_bytes, get_strings
 from ldaptor.protocols.ldap import distinguishedname, ldif, ldaperrors
 from ldaptor.protocols.ldap.distinguishedname import DistinguishedName
 from ldaptor.attributeset import LDAPAttributeSet
+from ldaptor.protocols.pureldap import (
+    LDAPFilterMatchAll,
+    LDAPFilter_and,
+    LDAP_SCOPE_wholeSubtree,
+    LDAP_DEREF_neverDerefAliases,
+    LDAP_SCOPE_singleLevel,
+    LDAP_SCOPE_baseObject,
+)
+from ldaptor.protocols.ldap.ldaperrors import LDAPProtocolError
+from ldaptor.ldapfilter import parseFilter
 
 from hashlib import sha1
 
@@ -105,7 +115,7 @@ class LdapEntry(abc.ABC):
         """
 
     @abc.abstractmethod
-    async def children(self) -> Collection["LdapEntry"]:
+    async def children(self) -> List["LdapEntry"]:
         """List the direct children of this entry."""
 
     @abc.abstractmethod
@@ -119,22 +129,53 @@ class LdapEntry(abc.ABC):
     async def match(self, filter) -> bool:
         """Does this entry matches the given filter?"""
 
-    async def subtree(self) -> Collection["LdapEntry"]:
+    async def subtree(self) -> List["LdapEntry"]:
         """List the subtree rooted at this entry, including this entry."""
+        subtree = [self]
+        children = await self.children()
+        for child in children:
+            subtree.extend(await child.subtree())
+        return subtree
 
-    # TODO
+    # TODO what about the arguments which are currently never used?
     async def search(
         self,
-        filterText=None,
-        filterObject=None,
+        filter_text=None,
+        filter_object=None,
         attributes=(),
-        scope=None,
-        derefAliases=None,
-        sizeLimit=0,
-        timeLimit=0,
-        typesOnly=0,
-    ) -> Collection["LdapEntry"]:
+        scope: int = None,
+        deref_aliases: int = None,
+        size_limit: int = 0,
+        time_limit: int = 0,
+        types_only: int = 0,
+    ) -> List["LdapEntry"]:
         """Apply a search operation, rooted at this entry."""
+        if filter_object is None and filter_text is None:
+            filter_object = LDAPFilterMatchAll
+        elif filter_object is None and filter_text is not None:
+            filter_object = parseFilter(filter_text)
+        elif filter_object is not None and filter_text is None:
+            pass
+        elif filter_object is not None and filter_text is not None:
+            f = parseFilter(filter_text)
+            filter_object = LDAPFilter_and((f, filter_object))
+
+        if scope is None:
+            scope = LDAP_SCOPE_wholeSubtree
+
+        if deref_aliases is None:
+            deref_aliases = LDAP_DEREF_neverDerefAliases
+
+        if scope == LDAP_SCOPE_wholeSubtree:
+            entries = await self.subtree()
+        elif scope == LDAP_SCOPE_singleLevel:
+            entries = await self.children()
+        elif scope == LDAP_SCOPE_baseObject:
+            entries = [self]
+        else:
+            raise LDAPProtocolError("unknown search scope: %r" % scope)
+
+        return [entry for entry in entries if entry.match(filter_object)]
 
 
 @implementer(interfaces.ILDAPEntry)

@@ -207,9 +207,9 @@ class LdapServer(BaseLdapServer):
             assertionValue=request.ava.assertionValue,
         )
         search_results = await base.search(
-            filterObject=search_filter,
+            filter_object=search_filter,
             scope=pureldap.LDAP_SCOPE_baseObject,
-            derefAliases=pureldap.LDAP_DEREF_neverDerefAliases,
+            deref_aliases=pureldap.LDAP_DEREF_neverDerefAliases,
         )
         if search_results:
             reply(pureldap.LDAPCompareResponse(ldaperrors.LDAPCompareTrue.resultCode))
@@ -250,13 +250,13 @@ class LdapServer(BaseLdapServer):
 
         base = await self.root.lookup(base_dn)
         search_results = await base.search(
-            filterObject=request.filter,
+            filter_object=request.filter,
             attributes=request.attributes,
             scope=request.scope,
-            derefAliases=request.derefAliases,
-            sizeLimit=request.sizeLimit,
-            timeLimit=request.timeLimit,
-            typesOnly=request.typesOnly,
+            deref_aliases=request.derefAliases,
+            size_limit=request.sizeLimit,
+            time_limit=request.timeLimit,
+            types_only=request.typesOnly,
         )
 
         for entry in search_results:
