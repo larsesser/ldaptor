@@ -12,8 +12,10 @@ from ldaptor.protocols.pureldap import (
     LDAPProtocolRequest,
     LDAPControls,
     LDAPProtocolResponse,
+    LDAPDelResponse,
+    LDAPDelRequest,
 )
-from ldaptor.protocols.ldap.ldaperrors import LDAPException, LDAPProtocolError
+from ldaptor.protocols.ldap.ldaperrors import LDAPException, LDAPProtocolError, Success
 from ldaptor.protocols.ldap import distinguishedname, ldaperrors
 from twisted.internet import protocol, defer
 
@@ -289,23 +291,20 @@ class LdapServer(ReadOnlyLdapServer):
 
     fail_LDAPDelRequest = pureldap.LDAPDelResponse
 
-    def handle_LDAPDelRequest(self, request, controls, reply):
+    async def handle_LDAPDelRequest(
+        self,
+        request: LDAPDelRequest,
+        controls: Optional[LDAPControls],
+        reply: ReplyCallback,
+    ) -> None:
         self.checkControls(controls)
 
         dn = distinguishedname.DistinguishedName(request.value)
-        root = interfaces.IConnectedLDAPEntry(self.factory)
-        d = root.lookup(dn)
+        entry = self.root.lookup(dn)
+        await entry.delete()
+        reply(LDAPDelResponse(resultCode=Success.resultCode))
 
-        def _gotEntry(entry):
-            d = entry.delete()
-            return d
-
-        def _report(entry):
-            return pureldap.LDAPDelResponse(resultCode=0)
-
-        d.addCallback(_gotEntry)
-        d.addCallback(_report)
-        return d
+        return None
 
     fail_LDAPAddRequest = pureldap.LDAPAddResponse
 
