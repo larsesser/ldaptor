@@ -1,7 +1,7 @@
 """LDAP protocol message conversion; no application logic here."""
 import abc
 import string
-from typing import Dict, Callable
+from typing import Dict, Callable, List
 
 
 from ldaptor.protocols.pureber import (
@@ -21,6 +21,7 @@ from ldaptor.protocols.pureber import (
     berDecodeMultiple,
     berDecodeObject,
     int2berlen,
+    validate_ber,
 )
 from ldaptor._encoder import to_bytes
 
@@ -85,30 +86,31 @@ class LDAPMessage(BERSequence):
     def fromBER(
         cls, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPMessage":
-        l = berDecodeMultiple(content, berdecoder)
+        vals = berDecodeMultiple(content, berdecoder)
 
-        id_ = l[0].value
-        value = l[1]
-        if l[2:]:
+        id_ = validate_ber(vals[0], BERInteger)
+        msg = validate_ber(vals[1], LDAPProtocolOp)
+
+        if len(vals) > 2:
+            raw_controls = validate_ber(vals[2], BERSequence)
             controls = []
-            for c in l[2]:
+            for raw_control in raw_controls:
+                control = validate_ber(raw_control, LDAPControl)
                 controls.append(
-                    (
-                        c.controlType,
-                        c.criticality,
-                        c.controlValue,
-                    )
+                    (control.controlType, control.criticality, control.controlValue)
                 )
         else:
             controls = None
-        assert not l[3:]
 
-        r = cls(id=id_, value=value, controls=controls, tag=tag)
+        if len(vals) > 3:
+            raise ValueError
+
+        r = cls(id=id_.value, value=msg, controls=controls, tag=tag)
         return r
 
     def __init__(
         self,
-        value=None,
+        value: "LDAPProtocolOp" = None,
         controls: "LDAPControls" = None,
         id: int = None,
         tag: int = None,
@@ -933,9 +935,10 @@ class LDAPSearchRequest(LDAPProtocolRequest, BERSequence):
     derefAliases = LDAP_DEREF_neverDerefAliases
     sizeLimit = 0
     timeLimit = 0
+    # TODO change to bool?
     typesOnly = 0
     filter = LDAPFilterMatchAll
-    attributes = []  # TODO AttributeDescriptionList
+    attributes: List[bytes] = []  # TODO AttributeDescriptionList
 
     # TODO decode
 
@@ -943,36 +946,46 @@ class LDAPSearchRequest(LDAPProtocolRequest, BERSequence):
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPSearchRequest":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content,
             LDAPBERDecoderContext_Filter(fallback=berdecoder, inherit=berdecoder),
         )
+        if len(vals) != 8:
+            raise ValueError
 
-        assert 8 <= len(l) <= 8
+        baseObject = validate_ber(vals[0], BEROctetString)
+        scope = validate_ber(vals[1], BEREnumerated)
+        derefAliases = validate_ber(vals[2], BEREnumerated)
+        sizeLimit = validate_ber(vals[3], BERInteger)
+        timeLimit = validate_ber(vals[4], BERInteger)
+        typesOnly = validate_ber(vals[5], BERBoolean)
+        filter_ = validate_ber(vals[6], AbstractLDAPFilter)
+        attributes = validate_ber(vals[7], BERSequence)
+
         r = klass(
-            baseObject=l[0].value,
-            scope=l[1].value,
-            derefAliases=l[2].value,
-            sizeLimit=l[3].value,
-            timeLimit=l[4].value,
-            typesOnly=l[5].value,
-            filter=l[6],
-            attributes=[x.value for x in l[7]],
+            baseObject=baseObject.value,
+            scope=scope.value,
+            derefAliases=derefAliases.value,
+            sizeLimit=sizeLimit.value,
+            timeLimit=timeLimit.value,
+            typesOnly=typesOnly.value,
+            filter=filter_,
+            attributes=[x.value for x in attributes],
             tag=tag,
         )
         return r
 
     def __init__(
         self,
-        baseObject=None,
-        scope=None,
-        derefAliases=None,
-        sizeLimit=None,
-        timeLimit=None,
-        typesOnly=None,
-        filter=None,
-        attributes=None,
-        tag=None,
+        baseObject: bytes = None,
+        scope: int = None,
+        derefAliases: int = None,
+        sizeLimit: int = None,
+        timeLimit: int = None,
+        typesOnly: int = None,
+        filter: AbstractLDAPFilter = None,
+        attributes: List[bytes] = None,
+        tag: int = None,
     ):
         LDAPProtocolRequest.__init__(self)
         BERSequence.__init__(self, [], tag=tag)

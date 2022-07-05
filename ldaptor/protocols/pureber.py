@@ -16,7 +16,7 @@
 #     this protocol definition.
 
 import abc
-from typing import Tuple, Dict, Optional, List, Type
+from typing import Tuple, Dict, Optional, List, Type, Any, TypeVar
 from collections import UserList
 
 from ldaptor._encoder import to_bytes, WireStrAlias
@@ -104,6 +104,18 @@ def ber2int(e: bytes, signed: bool = True) -> int:
     for i in range(1, len(e)):
         v = (v << 8) | ord(e[i : i + 1])
     return v
+
+
+T = TypeVar("T")
+
+
+def validate_ber(val: Optional["BERBase"], type_: Type[T]) -> T:
+    """Validate that the given value has the expected type."""
+    if val is None:
+        raise ValueError("Values must not be None.")
+    if not isinstance(val, type_):
+        raise TypeError(f"Expected {type_}, got {type(val)}.")
+    return val
 
 
 class BERBase(WireStrAlias, metaclass=abc.ABCMeta):
@@ -310,7 +322,7 @@ class BERSequence(BERStructured, UserList):
         return r
 
     # TODO type of value?
-    def __init__(self, value=None, tag: int = None):
+    def __init__(self, value: List[BERBase] = None, tag: int = None):
         BERStructured.__init__(self, tag)
         assert value is not None
         UserList.__init__(self, value)
@@ -411,7 +423,7 @@ def berDecodeObject(
 
 def berDecodeMultiple(
     content: bytes, berdecoder: BERDecoderContext
-) -> List[Tuple[Optional[BERBase], int]]:
+) -> List[Optional[BERBase]]:
     """berDecodeMultiple(content, berdecoder) -> [objects]
 
     Decodes everything in content and returns a list of decoded
