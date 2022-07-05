@@ -1,5 +1,5 @@
 """LDAP protocol message conversion; no application logic here."""
-
+import abc
 import string
 from typing import Dict, Callable
 
@@ -513,12 +513,17 @@ class LDAPAttributeValueAssertion(BERSequence):
             )
 
 
-class LDAPFilter(BERStructured):
+# TODO can we unify this with LDAPFilter?
+class AbstractLDAPFilter(BERBase, metaclass=abc.ABCMeta):
+    pass
+
+
+class LDAPFilter(BERStructured, AbstractLDAPFilter, metaclass=abc.ABCMeta):
     def __init__(self, tag=None):
         BERStructured.__init__(self, tag=tag)
 
 
-class LDAPFilterSet(BERSet):
+class LDAPFilterSet(BERSet, AbstractLDAPFilter):
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
@@ -593,7 +598,7 @@ class LDAPFilter_not(LDAPFilter):
         return "(!" + self.value.asText() + ")"
 
 
-class LDAPFilter_equalityMatch(LDAPAttributeValueAssertion):
+class LDAPFilter_equalityMatch(LDAPAttributeValueAssertion, AbstractLDAPFilter):
     tag = CLASS_CONTEXT | 0x03
 
     def asText(self) -> str:
@@ -606,21 +611,21 @@ class LDAPFilter_equalityMatch(LDAPAttributeValueAssertion):
         )
 
 
-class LDAPFilter_substrings_initial(LDAPString):
+class LDAPFilter_substrings_initial(LDAPString, AbstractLDAPFilter):
     tag = CLASS_CONTEXT | 0x00
 
     def asText(self) -> str:
         return self.escaper(self.value)
 
 
-class LDAPFilter_substrings_any(LDAPString):
+class LDAPFilter_substrings_any(LDAPString, AbstractLDAPFilter):
     tag = CLASS_CONTEXT | 0x01
 
     def asText(self) -> str:
         return self.escaper(self.value)
 
 
-class LDAPFilter_substrings_final(LDAPString):
+class LDAPFilter_substrings_final(LDAPString, AbstractLDAPFilter):
     tag = CLASS_CONTEXT | 0x02
 
     def asText(self) -> str:
@@ -635,7 +640,7 @@ class LDAPBERDecoderContext_Filter_substrings(BERDecoderContext):
     }
 
 
-class LDAPFilter_substrings(BERSequence):
+class LDAPFilter_substrings(BERSequence, AbstractLDAPFilter):
     tag = CLASS_CONTEXT | 0x04
 
     @classmethod
@@ -706,7 +711,7 @@ class LDAPFilter_substrings(BERSequence):
         return "(" + self.type + "=" + "*".join([initial] + any + [final]) + ")"
 
 
-class LDAPFilter_greaterOrEqual(LDAPAttributeValueAssertion):
+class LDAPFilter_greaterOrEqual(LDAPAttributeValueAssertion, AbstractLDAPFilter):
     tag = CLASS_CONTEXT | 0x05
 
     def asText(self) -> str:
@@ -719,7 +724,7 @@ class LDAPFilter_greaterOrEqual(LDAPAttributeValueAssertion):
         )
 
 
-class LDAPFilter_lessOrEqual(LDAPAttributeValueAssertion):
+class LDAPFilter_lessOrEqual(LDAPAttributeValueAssertion, AbstractLDAPFilter):
     tag = CLASS_CONTEXT | 0x06
 
     def asText(self) -> str:
@@ -732,14 +737,14 @@ class LDAPFilter_lessOrEqual(LDAPAttributeValueAssertion):
         )
 
 
-class LDAPFilter_present(LDAPAttributeDescription):
+class LDAPFilter_present(LDAPAttributeDescription, AbstractLDAPFilter):
     tag = CLASS_CONTEXT | 0x07
 
     def asText(self) -> str:
         return "(%s=*)" % self.value
 
 
-class LDAPFilter_approxMatch(LDAPAttributeValueAssertion):
+class LDAPFilter_approxMatch(LDAPAttributeValueAssertion, AbstractLDAPFilter):
     tag = CLASS_CONTEXT | 0x08
 
     def asText(self) -> str:
@@ -882,7 +887,7 @@ class LDAPMatchingRuleAssertion(BERSequence):
         return self.__class__.__name__ + "(" + ", ".join(l) + ")"
 
 
-class LDAPFilter_extensibleMatch(LDAPMatchingRuleAssertion):
+class LDAPFilter_extensibleMatch(LDAPMatchingRuleAssertion, AbstractLDAPFilter):
     tag = CLASS_CONTEXT | 0x09
 
     def asText(self) -> str:
