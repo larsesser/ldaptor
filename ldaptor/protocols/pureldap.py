@@ -140,20 +140,16 @@ class LDAPMessage(BERSequence):
         return self.__class__.__name__ + "(" + ", ".join(l) + ")"
 
 
-class LDAPProtocolOp:
-    def __init__(self):
-        pass
-
-    def toWire(self) -> bytes:
-        raise NotImplementedError()
+class LDAPProtocolOp(BERBase, metaclass=abc.ABCMeta):
+    pass
 
 
-class LDAPProtocolRequest(LDAPProtocolOp):
+class LDAPProtocolRequest(LDAPProtocolOp, metaclass=abc.ABCMeta):
     # TODO make this a bool?
     needs_answer = 1
 
 
-class LDAPProtocolResponse(LDAPProtocolOp):
+class LDAPProtocolResponse(LDAPProtocolOp, metaclass=abc.ABCMeta):
     pass
 
 

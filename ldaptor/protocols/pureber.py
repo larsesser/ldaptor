@@ -15,6 +15,7 @@
 #     Only some BOOLEAN and INTEGER types have default values in
 #     this protocol definition.
 
+import abc
 from typing import Tuple, Dict, Optional, List, Type
 from collections import UserList
 
@@ -105,8 +106,9 @@ def ber2int(e: bytes, signed: bool = True) -> int:
     return v
 
 
-class BERBase(WireStrAlias):
+class BERBase(WireStrAlias, metaclass=abc.ABCMeta):
     tag: int = None  # type: ignore[assignment]
+    value: Any = None
 
     def identification(self) -> int:
         return self.tag
