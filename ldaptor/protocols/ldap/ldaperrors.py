@@ -1,3 +1,5 @@
+from typing import Dict
+
 from ldaptor._encoder import to_bytes
 
 
@@ -12,7 +14,7 @@ class LDAPExceptionCollection(type):
     the corresponding classes.
     """
 
-    collection = {}
+    collection: Dict[int, type] = {}
 
     def __new__(mcs, name, bases, attributes):
         cls = type.__new__(mcs, name, bases, attributes)
@@ -33,8 +35,8 @@ class LDAPExceptionCollection(type):
 
 
 class LDAPResult(metaclass=LDAPExceptionCollection):
-    resultCode = None
-    name = None
+    resultCode: int = None  # type: ignore[assignment]
+    name: bytes = None  # type: ignore[assignment]
 
 
 class Success(LDAPResult):
@@ -54,7 +56,7 @@ class LDAPException(Exception, LDAPResult):
         message = self.toWire()
         return message.decode("utf-8")
 
-    def toWire(self):
+    def toWire(self) -> bytes:
         if self.message:
             return b"%s: %s" % (self.name, to_bytes(self.message))
         if self.name:
@@ -63,14 +65,14 @@ class LDAPException(Exception, LDAPResult):
 
 
 class LDAPUnknownError(LDAPException):
-    def __init__(self, resultCode, message=None):
+    def __init__(self, resultCode: int, message=None):
         assert resultCode not in LDAPExceptionCollection.collection, (
             "resultCode %r must be unknown" % resultCode
         )
         self.code = resultCode
         LDAPException.__init__(self, message)
 
-    def toWire(self):
+    def toWire(self) -> bytes:
         codeName = b"unknownError(%d)" % self.code
         if self.message:
             return b"%s: %s" % (codeName, to_bytes(self.message))
