@@ -52,6 +52,11 @@ class LdapEntry(abc.ABC):
     def __init__(
         self, dn: DistinguishedName, attributes: Dict[bytes, Collection[bytes]]
     ) -> None:
+        """Initialize an ldap entry.
+
+        Note that this function will most often be called during evaluating
+        'children' or 'lookup'.
+        """
         self.dn = dn
         # TODO replace with a dict implementation with case-insensitive keys
         self.attributes = dict()
@@ -104,14 +109,6 @@ class LdapEntry(abc.ABC):
         """Try to bind with the given password to this entry.
 
         :raises LDAPInvalidCredentials if the given passwort does not match.
-        """
-
-    # TODO which attributes type? which return type?
-    @abc.abstractmethod
-    async def fetch(self, attributes: Collection[bytes] = None) -> LDAPAttributeSet:
-        """Fetch the given attributes of this object from the server.
-
-        If attributes is None, all attributes shall be fetched.
         """
 
     @abc.abstractmethod

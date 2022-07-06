@@ -249,10 +249,8 @@ class ReadOnlyLdapServer(BaseLdapServer):
             and request.scope == pureldap.LDAP_SCOPE_baseObject
             and request.filter == pureldap.LDAPFilter_present("objectClass")
         ):
-            # prepare the attributes of the root entry as they are expected
-            attributes = await self.root.fetch()
             msg = pureldap.LDAPSearchResultEntry(
-                objectName=self.root.dn.getText(), attributes=attributes
+                objectName=self.root.dn.getText(), attributes=list(self.root.items())
             )
             reply(msg)
             msg = pureldap.LDAPSearchResultDone(
