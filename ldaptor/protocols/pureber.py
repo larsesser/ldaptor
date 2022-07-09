@@ -119,8 +119,8 @@ def validate_ber(val: Optional["BERBase"], type_: Type[T]) -> T:
 
 
 class BERBase(WireStrAlias, metaclass=abc.ABCMeta):
-    tag: int = None  # type: ignore[assignment]
-    value: Any = None
+    tag: int
+    value: Any
 
     def identification(self) -> int:
         return self.tag
@@ -148,7 +148,7 @@ class BERBase(WireStrAlias, metaclass=abc.ABCMeta):
 
     @classmethod
     def fromBER(
-        cls, tag: int, content: bytes, berdecoder: "BERDecoderContext" = None
+        cls, tag: int, content: bytes, berdecoder: "BERDecoderContext"
     ) -> "BERBase":
         raise NotImplementedError
 
@@ -177,18 +177,18 @@ def need(buf: bytes, n: int) -> None:
 
 class BERInteger(BERBase):
     tag = 0x02
-    value: int = None  # type: ignore[assignment]
+    value: int
 
     @classmethod
     def fromBER(
-        klass, tag: int, content: bytes, berdecoder: "BERDecoderContext" = None
+        klass, tag: int, content: bytes, berdecoder: "BERDecoderContext"
     ) -> "BERInteger":
         assert len(content) > 0
         value = ber2int(content)
         r = klass(value=value, tag=tag)
         return r
 
-    def __init__(self, value: int = None, tag: int = None):
+    def __init__(self, value: int, tag: int = None):
         """Create a new BERInteger object.
         value is an integer.
         """
@@ -212,18 +212,18 @@ class BERInteger(BERBase):
 
 class BEROctetString(BERBase):
     tag = 0x04
-    value: bytes = None  # type: ignore[assignment]
+    value: bytes
 
     @classmethod
     def fromBER(
-        klass, tag: int, content: bytes, berdecoder: "BERDecoderContext" = None
+        klass, tag: int, content: bytes, berdecoder: "BERDecoderContext"
     ) -> "BEROctetString":
         assert len(content) >= 0
         r = klass(value=content, tag=tag)
         return r
 
     # TODO type of value?
-    def __init__(self, value=None, tag: int = None):
+    def __init__(self, value: bytes, tag: int = None):
         BERBase.__init__(self, tag)
         assert value is not None
         self.value = value
@@ -249,7 +249,7 @@ class BERNull(BERBase):
 
     @classmethod
     def fromBER(
-        klass, tag: int, content: bytes, berdecoder: "BERDecoderContext" = None
+        klass, tag: int, content: bytes, berdecoder: "BERDecoderContext"
     ) -> "BERNull":
         assert len(content) == 0
         r = klass(tag=tag)
@@ -273,7 +273,7 @@ class BERBoolean(BERBase):
 
     @classmethod
     def fromBER(
-        klass, tag: int, content: bytes, berdecoder: "BERDecoderContext" = None
+        klass, tag: int, content: bytes, berdecoder: "BERDecoderContext"
     ) -> "BERBoolean":
         assert len(content) > 0
         value = ber2int(content)
@@ -281,7 +281,7 @@ class BERBoolean(BERBase):
         return r
 
     # TODO make value a boolean?
-    def __init__(self, value: int = None, tag: int = None):
+    def __init__(self, value: int, tag: int = None):
         """Create a new BERInteger object.
         value is an integer.
         """
@@ -315,7 +315,7 @@ class BERSequence(BERStructured, UserList):
 
     @classmethod
     def fromBER(
-        klass, tag: int, content: bytes, berdecoder: "BERDecoderContext" = None
+        klass, tag: int, content: bytes, berdecoder: "BERDecoderContext"
     ) -> "BERSequence":
         vals = berDecodeMultiple(content, berdecoder)
         seq = [validate_ber(val, BERBase) for val in vals]
@@ -323,7 +323,7 @@ class BERSequence(BERStructured, UserList):
         return r
 
     # TODO type of value?
-    def __init__(self, value: Iterable[BERBase] = None, tag: int = None):
+    def __init__(self, value: Iterable[BERBase], tag: int = None):
         BERStructured.__init__(self, tag)
         assert value is not None
         UserList.__init__(self, value)
