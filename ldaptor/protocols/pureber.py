@@ -16,7 +16,7 @@
 #     this protocol definition.
 
 import abc
-from typing import Tuple, Dict, Optional, List, Type, Any, TypeVar
+from typing import Tuple, Optional, List, Type, Any, TypeVar, Iterable, Mapping
 from collections import UserList
 
 from ldaptor._encoder import to_bytes, WireStrAlias
@@ -212,7 +212,7 @@ class BERInteger(BERBase):
 
 class BEROctetString(BERBase):
     tag = 0x04
-    value = None
+    value: bytes = None  # type: ignore[assignment]
 
     @classmethod
     def fromBER(
@@ -322,7 +322,7 @@ class BERSequence(BERStructured, UserList):
         return r
 
     # TODO type of value?
-    def __init__(self, value: List[BERBase] = None, tag: int = None):
+    def __init__(self, value: Iterable[BERBase] = None, tag: int = None):
         BERStructured.__init__(self, tag)
         assert value is not None
         UserList.__init__(self, value)
@@ -350,7 +350,7 @@ class BERSet(BERSequence):
 
 
 class BERDecoderContext:
-    Identities: Dict[int, Type[BERBase]] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         BERBoolean.tag: BERBoolean,
         BERInteger.tag: BERInteger,
         BEROctetString.tag: BEROctetString,
@@ -366,7 +366,7 @@ class BERDecoderContext:
         self.fallback = fallback
         self.inherit_context = inherit
 
-    def lookup_id(self, id: int) -> Optional[BERBase]:
+    def lookup_id(self, id: int) -> Optional[Type[BERBase]]:
         try:
             return self.Identities[id]
         except KeyError:
@@ -421,9 +421,7 @@ def berDecodeObject(
     return (None, 0)
 
 
-def berDecodeMultiple(
-    content: bytes, berdecoder: BERDecoderContext
-) -> List[Optional[BERBase]]:
+def berDecodeMultiple(content: bytes, berdecoder: BERDecoderContext) -> List[BERBase]:
     """berDecodeMultiple(content, berdecoder) -> [objects]
 
     Decodes everything in content and returns a list of decoded

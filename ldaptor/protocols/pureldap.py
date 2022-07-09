@@ -1,7 +1,7 @@
 """LDAP protocol message conversion; no application logic here."""
 import abc
 import string
-from typing import Dict, Callable, List
+from typing import Callable, List, Type, Tuple, Optional, Union, Mapping
 
 
 from ldaptor.protocols.pureber import (
@@ -24,6 +24,8 @@ from ldaptor.protocols.pureber import (
     validate_ber,
 )
 from ldaptor._encoder import to_bytes
+
+EscaperCallable = Callable[[str], str]
 
 next_ldap_message_id = 1
 
@@ -62,7 +64,7 @@ class LDAPInteger(BERInteger):
 
 
 class LDAPString(BEROctetString):
-    escaper: Callable[[str], str] = None  # type: ignore[assignment]
+    escaper: EscaperCallable = None  # type: ignore[assignment]
 
     def __init__(self, *args, **kwargs):
         self.escaper = kwargs.pop("escaper", escape)
@@ -156,7 +158,7 @@ class LDAPProtocolResponse(LDAPProtocolOp, metaclass=abc.ABCMeta):
 
 
 class LDAPBERDecoderContext_LDAPBindRequest(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         CLASS_CONTEXT | 0x00: BEROctetString,
         CLASS_CONTEXT | 0x03: BERSequence,
     }
@@ -250,7 +252,7 @@ class LDAPReferral(BERSequence):
 
 
 class LDAPBERDecoderContext_LDAPSearchResultReference(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         BEROctetString.tag: LDAPString,
     }
 
@@ -383,7 +385,7 @@ class LDAPBindResponse_serverSaslCreds(BEROctetString):
 
 
 class LDAPBERDecoderContext_BindResponse(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         LDAPBindResponse_serverSaslCreds.tag: LDAPBindResponse_serverSaslCreds,
     }
 
@@ -631,7 +633,7 @@ class LDAPFilter_substrings_final(LDAPString, AbstractLDAPFilter):
 
 
 class LDAPBERDecoderContext_Filter_substrings(BERDecoderContext):
-    Identities: Dict[int, LDAPString] = {
+    Identities: Mapping[int, Type[LDAPString]] = {
         LDAPFilter_substrings_initial.tag: LDAPFilter_substrings_initial,
         LDAPFilter_substrings_any.tag: LDAPFilter_substrings_any,
         LDAPFilter_substrings_final.tag: LDAPFilter_substrings_final,
@@ -780,7 +782,7 @@ class LDAPMatchingRuleAssertion_dnAttributes(BERBoolean):
 
 
 class LDAPBERDecoderContext_MatchingRuleAssertion(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         LDAPMatchingRuleAssertion_matchingRule.tag: LDAPMatchingRuleAssertion_matchingRule,
         LDAPMatchingRuleAssertion_type.tag: LDAPMatchingRuleAssertion_type,
         LDAPMatchingRuleAssertion_matchValue.tag: LDAPMatchingRuleAssertion_matchValue,
@@ -901,7 +903,7 @@ class LDAPFilter_extensibleMatch(LDAPMatchingRuleAssertion, AbstractLDAPFilter):
 
 
 class LDAPBERDecoderContext_Filter(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         LDAPFilter_and.tag: LDAPFilter_and,
         LDAPFilter_or.tag: LDAPFilter_or,
         LDAPFilter_not.tag: LDAPFilter_not,
@@ -1178,20 +1180,20 @@ class LDAPControl(BERSequence):
 
 
 class LDAPBERDecoderContext_LDAPControls(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         LDAPControl.tag: LDAPControl,
     }
 
 
 class LDAPBERDecoderContext_LDAPMessage(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         LDAPControls.tag: LDAPControls,
         LDAPSearchResultReference.tag: LDAPSearchResultReference,
     }
 
 
 class LDAPBERDecoderContext_TopLevel(BERDecoderContext):
-    Identities: Dict[int, LDAPMessage] = {
+    Identities: Mapping[int, Type[LDAPMessage]] = {
         BERSequence.tag: LDAPMessage,
     }
 
@@ -1381,7 +1383,7 @@ class LDAPModifyDNResponse_newSuperior(LDAPString):
 
 
 class LDAPBERDecoderContext_ModifyDNRequest(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         LDAPModifyDNResponse_newSuperior.tag: LDAPModifyDNResponse_newSuperior,
     }
 
@@ -1466,7 +1468,9 @@ class LDAPModifyDNResponse(LDAPResult):
 
 
 class LDAPBERDecoderContext_Compare(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {BERSequence.tag: LDAPAttributeValueAssertion}
+    Identities: Mapping[int, Type[BERBase]] = {
+        BERSequence.tag: LDAPAttributeValueAssertion
+    }
 
 
 class LDAPCompareRequest(LDAPProtocolRequest, BERSequence):
@@ -1553,7 +1557,7 @@ class LDAPResponse(BEROctetString):
 
 
 class LDAPBERDecoderContext_LDAPExtendedRequest(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         CLASS_CONTEXT | 0x00: BEROctetString,
         CLASS_CONTEXT | 0x01: BEROctetString,
     }
@@ -1622,7 +1626,7 @@ class LDAPPasswordModifyRequest_newPasswd(LDAPPasswordModifyRequest_passwd):
 
 
 class LDAPBERDecoderContext_LDAPPasswordModifyRequest(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         LDAPPasswordModifyRequest_userIdentity.tag: LDAPPasswordModifyRequest_userIdentity,
         LDAPPasswordModifyRequest_oldPasswd.tag: LDAPPasswordModifyRequest_oldPasswd,
         LDAPPasswordModifyRequest_newPasswd.tag: LDAPPasswordModifyRequest_newPasswd,
@@ -1683,7 +1687,7 @@ class LDAPPasswordModifyRequest(LDAPExtendedRequest):
 
 
 class LDAPBERDecoderContext_LDAPExtendedResponse(BERDecoderContext):
-    Identities: Dict[int, BERBase] = {
+    Identities: Mapping[int, Type[BERBase]] = {
         LDAPResponseName.tag: LDAPResponseName,
         LDAPResponse.tag: LDAPResponse,
     }
@@ -1834,7 +1838,7 @@ class LDAPStartTLSResponse(LDAPExtendedResponse):
 
 
 class LDAPBERDecoderContext(BERDecoderContext):
-    Identities: Dict[int, LDAPProtocolOp] = {
+    Identities: Mapping[int, Type[LDAPProtocolOp]] = {
         LDAPBindResponse.tag: LDAPBindResponse,
         LDAPBindRequest.tag: LDAPBindRequest,
         LDAPUnbindRequest.tag: LDAPUnbindRequest,
