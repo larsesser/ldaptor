@@ -82,7 +82,7 @@ class LDAPMessage(BERSequence):
     """
 
     id: int = None  # type: ignore[assignment]
-    value = None
+    value: "LDAPProtocolOp" = None  # type: ignore[assignment]
 
     @classmethod
     def fromBER(
@@ -94,6 +94,7 @@ class LDAPMessage(BERSequence):
         msg = validate_ber(vals[1], LDAPProtocolOp)
 
         if len(vals) > 2:
+            # TODO why not use LDAPControls directly here?
             raw_controls = validate_ber(vals[2], BERSequence)
             controls = []
             for raw_control in raw_controls:
@@ -119,9 +120,9 @@ class LDAPMessage(BERSequence):
     ):
         BERSequence.__init__(self, value=[], tag=tag)
         assert value is not None
+        if id is None:
+            id = alloc_ldap_message_id()
         self.id = id
-        if self.id is None:
-            self.id = alloc_ldap_message_id()
         self.value = value
         self.controls = controls
 
@@ -166,32 +167,50 @@ class LDAPBERDecoderContext_LDAPBindRequest(BERDecoderContext):
 
 class LDAPBindRequest(LDAPProtocolRequest, BERSequence):
     tag = CLASS_APPLICATION | 0x00
+    version: int
+    dn: bytes
+    auth: Union[bytes, Tuple[bytes, Optional[bytes]]]
+    sasl: bool
 
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPBindRequest":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content, LDAPBERDecoderContext_LDAPBindRequest(fallback=berdecoder)
         )
+        version = validate_ber(vals[0], BERInteger)
+        dn = validate_ber(vals[1], BEROctetString)
+        raw_auth = vals[2]
 
+        auth: Optional[Union[bytes, Tuple[bytes, Optional[bytes]]]]
         sasl = False
-        auth = None
-        if isinstance(l[2], BEROctetString):
-            auth = l[2].value
-        elif isinstance(l[2], BERSequence):
+        if isinstance(raw_auth, BEROctetString):
+            auth = raw_auth.value
+        elif isinstance(raw_auth, BERSequence):
+            mechanism = validate_ber(raw_auth[0], BEROctetString)
             # per https://ldap.com/ldapv3-wire-protocol-reference-bind/
             # Credentials are optional and not always provided
-            if len(l[2].data) == 2:
-                auth = (l[2][0].value, l[2][1].value)
+            if len(raw_auth.data) == 2:
+                credentials = validate_ber(raw_auth[1], BEROctetString)
+                auth = (mechanism.value, credentials.value)
             else:
-                auth = (l[2][0].value, None)
+                auth = (mechanism.value, None)
             sasl = True
+        else:
+            auth = None
 
-        r = klass(version=l[0].value, dn=l[1].value, auth=auth, tag=tag, sasl=sasl)
+        r = klass(version=version.value, dn=dn.value, auth=auth, tag=tag, sasl=sasl)
         return r
 
-    def __init__(self, version=None, dn=None, auth=None, tag=None, sasl=False):
+    def __init__(
+        self,
+        version: int = None,
+        dn: bytes = None,
+        auth: Union[bytes, Tuple[bytes, Optional[bytes]]] = None,
+        tag: int = None,
+        sasl: bool = False,
+    ):
         """Constructor for LDAP Bind Request
 
         For sasl=False, pass a string password for 'auth'
@@ -199,19 +218,20 @@ class LDAPBindRequest(LDAPProtocolRequest, BERSequence):
 
         LDAPProtocolRequest.__init__(self)
         BERSequence.__init__(self, [], tag=tag)
+        if version is None:
+            version = 3
         self.version = version
-        if self.version is None:
-            self.version = 3
+        if dn is None:
+            dn = ""
         self.dn = dn
-        if self.dn is None:
-            self.dn = ""
-        self.auth = auth
-        if self.auth is None:
-            self.auth = ""
+        if auth is None:
+            auth = ""
             assert not sasl
+        self.auth = auth
         self.sasl = sasl
 
     def toWire(self) -> bytes:
+        auth_ber: Union[BEROctetString, BERSequence]
         if not self.sasl:
             auth_ber = BEROctetString(self.auth, tag=CLASS_CONTEXT | 0)
         else:
@@ -259,8 +279,9 @@ class LDAPBERDecoderContext_LDAPSearchResultReference(BERDecoderContext):
 
 class LDAPSearchResultReference(LDAPProtocolResponse, BERSequence):
     tag = CLASS_APPLICATION | 0x13
+    uris: List[LDAPString]
 
-    def __init__(self, uris=None, tag=None):
+    def __init__(self, uris: List[LDAPString] = None, tag: int = None):
         LDAPProtocolResponse.__init__(self)
         BERSequence.__init__(self, value=[], tag=tag)
         assert uris is not None
@@ -270,11 +291,12 @@ class LDAPSearchResultReference(LDAPProtocolResponse, BERSequence):
     def fromBER(
         cls, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPSearchResultReference":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content,
             LDAPBERDecoderContext_LDAPSearchResultReference(fallback=berdecoder),
         )
-        r = cls(uris=l)
+        uris = [validate_ber(val, LDAPString) for val in vals]
+        r = cls(uris=uris)
         return r
 
     def toWire(self) -> bytes:
@@ -293,21 +315,24 @@ class LDAPResult(LDAPProtocolResponse, BERSequence):
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPResult":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content, LDAPBERDecoderContext_LDAPBindRequest(fallback=berdecoder)
         )
+        if not (3 <= len(vals) <= 4):
+            raise ValueError
 
-        assert 3 <= len(l) <= 4
-
+        resultCode = validate_ber(vals[0], BEREnumerated)
+        matchedDN = validate_ber(vals[1], BEROctetString)
+        errorMessage = validate_ber(vals[2], BEROctetString)
         referral = None
         # if (l[3:] and isinstance(l[3], LDAPReferral)):
         # TODO support referrals
         # self.referral=self.data[0]
 
         r = klass(
-            resultCode=l[0].value,
-            matchedDN=l[1].value,
-            errorMessage=l[2].value,
+            resultCode=resultCode.value,
+            matchedDN=matchedDN.value,
+            errorMessage=errorMessage.value,
             referral=referral,
             tag=tag,
         )
@@ -315,11 +340,11 @@ class LDAPResult(LDAPProtocolResponse, BERSequence):
 
     def __init__(
         self,
-        resultCode=None,
-        matchedDN=None,
-        errorMessage=None,
+        resultCode: int = None,
+        matchedDN: bytes = None,
+        errorMessage: bytes = None,
         referral=None,
-        serverSaslCreds=None,
+        serverSaslCreds: bytes = None,
         tag=None,
     ):
         LDAPProtocolResponse.__init__(self)
@@ -393,29 +418,31 @@ class LDAPBERDecoderContext_BindResponse(BERDecoderContext):
 class LDAPBindResponse(LDAPResult):
     tag = CLASS_APPLICATION | 0x01
 
-    resultCode = None
-    matchedDN = None
-    errorMessage = None
+    resultCode: int = None  # type: ignore[assignment]
+    matchedDN: bytes = None  # type: ignore[assignment]
+    errorMessage: bytes = None  # type: ignore[assignment]
     referral = None
-    serverSaslCreds = None
+    serverSaslCreds: bytes = None  # type: ignore[assignment]
 
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPBindResponse":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content, LDAPBERDecoderContext_BindResponse(fallback=berdecoder)
         )
 
-        assert 3 <= len(l) <= 4
+        if not (3 <= len(vals) <= 4):
+            raise ValueError
 
-        try:
-            if isinstance(l[3], LDAPBindResponse_serverSaslCreds):
-                serverSaslCreds = l[3].value
-            else:
-                serverSaslCreds = None
-        except IndexError:
-            serverSaslCreds = None
+        resultCode = validate_ber(vals[0], BEREnumerated)
+        matchedDN = validate_ber(vals[1], BEROctetString)
+        errorMessage = validate_ber(vals[2], BEROctetString)
+        if len(vals) > 3 and isinstance(vals[3], LDAPBindResponse_serverSaslCreds):
+            serverSaslCreds = validate_ber(vals[3], LDAPBindResponse_serverSaslCreds)
+            serverSaslCreds_value = serverSaslCreds.value
+        else:
+            serverSaslCreds_value = None
 
         referral = None
         # if (l[3:] and isinstance(l[3], LDAPReferral)):
@@ -423,23 +450,23 @@ class LDAPBindResponse(LDAPResult):
         # self.referral=self.data[0]
 
         r = klass(
-            resultCode=l[0].value,
-            matchedDN=l[1].value,
-            errorMessage=l[2].value,
+            resultCode=resultCode.value,
+            matchedDN=matchedDN.value,
+            errorMessage=errorMessage.value,
             referral=referral,
-            serverSaslCreds=serverSaslCreds,
+            serverSaslCreds=serverSaslCreds_value,
             tag=tag,
         )
         return r
 
     def __init__(
         self,
-        resultCode=None,
-        matchedDN=None,
-        errorMessage=None,
+        resultCode: int = None,
+        matchedDN: bytes = None,
+        errorMessage: bytes = None,
         referral=None,
-        serverSaslCreds=None,
-        tag=None,
+        serverSaslCreds: bytes = None,
+        tag: int = None,
     ):
         LDAPResult.__init__(
             self,
@@ -448,6 +475,7 @@ class LDAPBindResponse(LDAPResult):
             errorMessage=errorMessage,
             referral=referral,
             serverSaslCreds=serverSaslCreds,
+            # TODO why is tag not passed?
             tag=None,
         )
 
@@ -476,14 +504,21 @@ class LDAPAttributeValueAssertion(BERSequence):
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPAttributeValueAssertion":
-        l = berDecodeMultiple(content, berdecoder)
-        assert len(l) == 2
+        vals = berDecodeMultiple(content, berdecoder)
+        if len(vals) != 2:
+            raise ValueError
+        attributeDesc = validate_ber(vals[0], BEROctetString)
+        assertionValue = validate_ber(vals[1], BEROctetString)
 
-        r = klass(attributeDesc=l[0], assertionValue=l[1], tag=tag)
+        r = klass(attributeDesc=attributeDesc, assertionValue=assertionValue, tag=tag)
         return r
 
     def __init__(
-        self, attributeDesc=None, assertionValue=None, tag=None, escaper=escape
+        self,
+        attributeDesc: BEROctetString = None,
+        assertionValue: BEROctetString = None,
+        tag: int = None,
+        escaper: EscaperCallable = escape,
     ):
         BERSequence.__init__(self, value=[], tag=tag)
         assert attributeDesc is not None
@@ -528,10 +563,10 @@ class LDAPFilterSet(BERSet, AbstractLDAPFilter):
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPFilterSet":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content, LDAPBERDecoderContext_Filter(fallback=berdecoder)
         )
-        r = klass(l, tag=tag)
+        r = klass(vals, tag=tag)
         return r
 
     def __eq__(self, rhs):
@@ -567,18 +602,21 @@ class LDAPFilter_not(LDAPFilter):
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPFilter_not":
-        value, bytes = berDecodeObject(
+        val, bytes_ = berDecodeObject(
             LDAPBERDecoderContext_Filter(fallback=berdecoder, inherit=berdecoder),
             content,
         )
-        assert bytes == len(content)
+        if bytes_ != len(content):
+            raise ValueError
+        value = validate_ber(val, AbstractLDAPFilter)
 
         r = klass(value=value, tag=tag)
         return r
 
-    def __init__(self, value, tag=tag):
+    def __init__(self, value: AbstractLDAPFilter, tag: int = tag):
         LDAPFilter.__init__(self, tag=tag)
-        assert value is not None
+        if value is None:
+            raise ValueError
         self.value = value
 
     def __repr__(self):
@@ -647,19 +685,28 @@ class LDAPFilter_substrings(BERSequence, AbstractLDAPFilter):
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPFilter_substrings":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content, LDAPBERDecoderContext_Filter_substrings(fallback=berdecoder)
         )
-        assert len(l) == 2
-        assert len(l[1]) >= 1
+        if len(vals) != 2:
+            raise ValueError
+        type_ = validate_ber(vals[0], BEROctetString)
+        raw_substrings = validate_ber(vals[1], BERSequence)
+        if len(raw_substrings) == 0:
+            raise ValueError
+        substrings = [validate_ber(sub, LDAPString) for sub in raw_substrings]
 
-        r = klass(type=l[0].value, substrings=list(l[1]), tag=tag)
+        r = klass(type=type_.value, substrings=substrings, tag=tag)
         return r
 
-    def __init__(self, type=None, substrings=None, tag=None):
+    def __init__(
+        self, type: bytes = None, substrings: List[LDAPString] = None, tag: int = None
+    ):
         BERSequence.__init__(self, value=[], tag=tag)
-        assert type is not None
-        assert substrings is not None
+        if type is None:
+            raise ValueError
+        if substrings is None:
+            raise ValueError
         self.type = type
         self.substrings = substrings
 
@@ -791,10 +838,13 @@ class LDAPBERDecoderContext_MatchingRuleAssertion(BERDecoderContext):
 
 
 class LDAPMatchingRuleAssertion(BERSequence):
-    matchingRule = None
-    type = None
-    matchValue = None
-    dnAttributes = None
+    # TODO this class stores its attributes as LDAP* objects. Maybe unify this with the
+    #  other classes (in any direction)?
+    matchingRule: LDAPMatchingRuleAssertion_matchingRule = None  # type: ignore[assignment]
+    type: LDAPMatchingRuleAssertion_type = None  # type: ignore[assignment]
+    matchValue: LDAPMatchingRuleAssertion_matchValue = None  # type: ignore[assignment]
+    dnAttributes: Optional[LDAPMatchingRuleAssertion_dnAttributes] = None
+    escaper: EscaperCallable
 
     @classmethod
     def fromBER(
@@ -804,26 +854,26 @@ class LDAPMatchingRuleAssertion(BERSequence):
         atype = None
         matchValue = None
         dnAttributes = None
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content,
             LDAPBERDecoderContext_MatchingRuleAssertion(
                 fallback=berdecoder, inherit=berdecoder
             ),
         )
-        assert 1 <= len(l) <= 4
-        if isinstance(l[0], LDAPMatchingRuleAssertion_matchingRule):
-            matchingRule = l[0]
-            del l[0]
-        if len(l) >= 1 and isinstance(l[0], LDAPMatchingRuleAssertion_type):
-            atype = l[0]
-            del l[0]
-        if len(l) >= 1 and isinstance(l[0], LDAPMatchingRuleAssertion_matchValue):
-            matchValue = l[0]
-            del l[0]
-        if len(l) >= 1 and isinstance(l[0], LDAPMatchingRuleAssertion_dnAttributes):
-            dnAttributes = l[0]
-            del l[0]
-        assert matchValue
+        if not (1 <= len(vals) <= 4):
+            raise ValueError
+        if isinstance(vals[0], LDAPMatchingRuleAssertion_matchingRule):
+            matchingRule = validate_ber(vals[0], LDAPMatchingRuleAssertion_matchingRule)
+        if len(vals) >= 2 and isinstance(vals[1], LDAPMatchingRuleAssertion_type):
+            atype = validate_ber(vals[1], LDAPMatchingRuleAssertion_type)
+        if len(vals) >= 3 and isinstance(vals[2], LDAPMatchingRuleAssertion_matchValue):
+            matchValue = validate_ber(vals[2], LDAPMatchingRuleAssertion_matchValue)
+        if len(vals) == 4 and isinstance(
+            vals[3], LDAPMatchingRuleAssertion_dnAttributes
+        ):
+            dnAttributes = validate_ber(vals[3], LDAPMatchingRuleAssertion_dnAttributes)
+        if matchingRule is None:
+            raise ValueError
         if not dnAttributes:
             dnAttributes = None
         r = klass(
@@ -838,12 +888,12 @@ class LDAPMatchingRuleAssertion(BERSequence):
 
     def __init__(
         self,
-        matchingRule=None,
-        type=None,
-        matchValue=None,
-        dnAttributes=None,
-        tag=None,
-        escaper=escape,
+        matchingRule: Union[bytes, LDAPMatchingRuleAssertion_matchingRule] = None,
+        type: Union[bytes, LDAPMatchingRuleAssertion_type] = None,
+        matchValue: Union[bytes, LDAPMatchingRuleAssertion_matchValue] = None,
+        dnAttributes: Union[bool, LDAPMatchingRuleAssertion_dnAttributes] = None,
+        tag: int = None,
+        escaper: EscaperCallable = escape,
     ):
         BERSequence.__init__(self, value=[], tag=tag)
         assert matchValue is not None
@@ -1062,24 +1112,35 @@ class LDAPSearchRequest(LDAPProtocolRequest, BERSequence):
 
 class LDAPSearchResultEntry(LDAPProtocolResponse, BERSequence):
     tag = CLASS_APPLICATION | 0x04
+    objectName: bytes
+    attributes: List[Tuple[bytes, List[bytes]]]
 
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPSearchResultEntry":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content,
             LDAPBERDecoderContext_Filter(fallback=berdecoder, inherit=berdecoder),
         )
 
-        objectName = l[0].value
+        objectName = validate_ber(vals[0], BEROctetString)
+        raw_attributes = validate_ber(vals[1], BERSequence)
         attributes = []
-        for attr, li in l[1].data:
-            attributes.append((attr.value, [x.value for x in li]))
-        r = klass(objectName=objectName, attributes=attributes, tag=tag)
+        for raw_attribute, raw_val in raw_attributes.data:
+            attribute = validate_ber(raw_attribute, BEROctetString)
+            raw_values = validate_ber(raw_val, BERSet)
+            values = [validate_ber(val, BEROctetString).value for val in raw_values]
+            attributes.append((attribute.value, values))
+        r = klass(objectName=objectName.value, attributes=attributes, tag=tag)
         return r
 
-    def __init__(self, objectName, attributes, tag=None):
+    def __init__(
+        self,
+        objectName: bytes,
+        attributes: List[Tuple[bytes, List[bytes]]],
+        tag: int = None,
+    ):
         LDAPProtocolResponse.__init__(self)
         BERSequence.__init__(self, [], tag=tag)
         assert objectName is not None
@@ -1128,41 +1189,56 @@ class LDAPControls(BERSequence):
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPControls":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content, LDAPBERDecoderContext_LDAPControls(inherit=berdecoder)
         )
+        controls = [validate_ber(val, LDAPControl) for val in vals]
 
-        r = klass(l, tag=tag)
+        r = klass(controls, tag=tag)
         return r
 
 
 class LDAPControl(BERSequence):
-    criticality = None
-    controlValue = None
+    criticality: bool = None  # type: ignore[assignment]
+    controlValue: bytes = None  # type: ignore[assignment]
 
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPControl":
-        l = berDecodeMultiple(content, berdecoder)
+        vals = berDecodeMultiple(content, berdecoder)
 
-        assert 1 <= len(l) <= 3
+        if not (1 <= len(vals) <= 3):
+            raise ValueError
 
-        kw = {}
-        if len(l) == 2:
-            if isinstance(l[1], BERBoolean):
-                kw["criticality"] = l[1].value
-            elif isinstance(l[1], BEROctetString):
-                kw["controlValue"] = l[1].value
-        elif len(l) == 3:
-            kw["criticality"] = l[1].value
-            kw["controlValue"] = l[2].value
+        controlType = validate_ber(vals[0], BEROctetString)
+        criticality = None
+        controlValue = None
 
-        r = klass(controlType=l[0].value, tag=tag, **kw)
+        if len(vals) == 2:
+            if isinstance(vals[1], BERBoolean):
+                criticality = validate_ber(vals[1], BERBoolean).value
+            elif isinstance(vals[1], BEROctetString):
+                controlValue = validate_ber(vals[1], BEROctetString).value
+        elif len(vals) == 3:
+            criticality = validate_ber(vals[1], BERBoolean).value
+            controlValue = validate_ber(vals[2], BEROctetString).value
+
+        r = klass(
+            controlType=controlType.value,
+            tag=tag,
+            criticality=criticality,
+            controlValue=controlValue,
+        )
         return r
 
     def __init__(
-        self, controlType, criticality=None, controlValue=None, id=None, tag=None
+        self,
+        controlType: bytes,
+        criticality: bool = None,
+        controlValue: bytes = None,
+        id=None,
+        tag: int = None,
     ):
         BERSequence.__init__(self, value=[], tag=tag)
         assert controlType is not None
@@ -1200,21 +1276,27 @@ class LDAPBERDecoderContext_TopLevel(BERDecoderContext):
 
 class LDAPModifyRequest(LDAPProtocolRequest, BERSequence):
     tag = CLASS_APPLICATION | 0x06
-    object = None
-    modification = None
+    object: bytes = None  # type: ignore[assignment]
+    modification: List[BERBase] = None  # type: ignore[assignment]
 
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPModifyRequest":
-        l = berDecodeMultiple(content, berdecoder)
+        vals = berDecodeMultiple(content, berdecoder)
 
-        assert len(l) == 2
+        if len(vals) != 2:
+            raise ValueError
 
-        r = klass(object=l[0].value, modification=l[1].data, tag=tag)
+        object = validate_ber(vals[0], BEROctetString)
+        modification = validate_ber(vals[1], BERSequence)
+
+        r = klass(object=object.value, modification=modification.data, tag=tag)
         return r
 
-    def __init__(self, object=None, modification=None, tag=None):
+    def __init__(
+        self, object: bytes = None, modification: List[BERBase] = None, tag: int = None
+    ):
         """
         Initialize the object
 
@@ -1284,17 +1366,25 @@ class LDAPModifyResponse(LDAPResult):
 
 class LDAPAddRequest(LDAPProtocolRequest, BERSequence):
     tag = CLASS_APPLICATION | 0x08
+    entry: bytes
+    attributes: BERSequence
 
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPAddRequest":
-        l = berDecodeMultiple(content, berdecoder)
+        vals = berDecodeMultiple(content, berdecoder)
 
-        r = klass(entry=l[0].value, attributes=l[1], tag=tag)
+        entry = validate_ber(vals[0], BEROctetString)
+        attributes = validate_ber(vals[1], BERSequence)
+        # TODO extend validation and casting
+
+        r = klass(entry=entry.value, attributes=attributes, tag=tag)
         return r
 
-    def __init__(self, entry=None, attributes=None, tag=None):
+    def __init__(
+        self, entry: bytes = None, attributes: BERSequence = None, tag: int = None
+    ):
         """
         Initialize the object
 
@@ -1349,6 +1439,7 @@ class LDAPAddResponse(LDAPResult):
 class LDAPDelRequest(LDAPProtocolRequest, LDAPString):
     tag = CLASS_APPLICATION | 0x0A
 
+    # TODO ?
     def __init__(self, value=None, entry=None, tag=None):
         """
         Initialize the object
@@ -1391,35 +1482,47 @@ class LDAPBERDecoderContext_ModifyDNRequest(BERDecoderContext):
 class LDAPModifyDNRequest(LDAPProtocolRequest, BERSequence):
     tag = CLASS_APPLICATION | 12
 
-    entry = None
-    newrdn = None
-    deleteoldrdn = None
-    newSuperior = None
+    entry: bytes = None  # type: ignore[assignment]
+    newrdn: bytes = None  # type: ignore[assignment]
+    deleteoldrdn: bool = None  # type: ignore[assignment]
+    newSuperior: Optional[bytes] = None
 
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPModifyDNRequest":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content, LDAPBERDecoderContext_ModifyDNRequest(fallback=berdecoder)
         )
+        if not (3 <= len(vals) <= 4):
+            raise ValueError
 
-        kw = {}
-        try:
-            kw["newSuperior"] = to_bytes(l[3].value)
-        except IndexError:
-            pass
+        entry = validate_ber(vals[0], BEROctetString)
+        newrdn = validate_ber(vals[1], BEROctetString)
+        deleteoldrdn = validate_ber(vals[2], BERBoolean)
+        if len(vals) == 4:
+            newSuperior = to_bytes(validate_ber(vals[3], BEROctetString).value)
+        else:
+            newSuperior = None
 
+        # TODO the to_bytes conversion should be idempotent
         r = klass(
-            entry=to_bytes(l[0].value),
-            newrdn=to_bytes(l[1].value),
-            deleteoldrdn=l[2].value,
+            entry=to_bytes(entry.value),
+            newrdn=to_bytes(newrdn.value),
+            deleteoldrdn=deleteoldrdn.value,
             tag=tag,
-            **kw,
+            newSuperior=newSuperior,
         )
         return r
 
-    def __init__(self, entry, newrdn, deleteoldrdn, newSuperior=None, tag=None):
+    def __init__(
+        self,
+        entry: bytes,
+        newrdn: bytes,
+        deleteoldrdn: bool,
+        newSuperior: bytes = None,
+        tag: int = None,
+    ):
         """
         Initialize the object
 
@@ -1476,23 +1579,28 @@ class LDAPBERDecoderContext_Compare(BERDecoderContext):
 class LDAPCompareRequest(LDAPProtocolRequest, BERSequence):
     tag = CLASS_APPLICATION | 14
 
-    entry = None
-    ava = None
+    entry: bytes = None  # type: ignore[assignment]
+    ava: LDAPAttributeValueAssertion = None  # type: ignore[assignment]
 
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPCompareRequest":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content,
             LDAPBERDecoderContext_Compare(fallback=berdecoder, inherit=berdecoder),
         )
+        if len(vals) != 2:
+            raise ValueError
 
-        r = klass(entry=l[0].value, ava=l[1], tag=tag)
+        entry = validate_ber(vals[0], BEROctetString)
+        ava = validate_ber(vals[1], LDAPAttributeValueAssertion)
+
+        r = klass(entry=entry.value, ava=ava, tag=tag)
 
         return r
 
-    def __init__(self, entry, ava, tag=None):
+    def __init__(self, entry: bytes, ava: LDAPAttributeValueAssertion, tag: int = None):
         LDAPProtocolRequest.__init__(self)
         BERSequence.__init__(self, [], tag=tag)
         assert entry is not None
@@ -1566,27 +1674,31 @@ class LDAPBERDecoderContext_LDAPExtendedRequest(BERDecoderContext):
 class LDAPExtendedRequest(LDAPProtocolRequest, BERSequence):
     tag = CLASS_APPLICATION | 23
 
-    requestName = None
-    requestValue = None
+    requestName: bytes = None  # type: ignore[assignment]
+    requestValue: Optional[bytes] = None
 
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPExtendedRequest":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content, LDAPBERDecoderContext_LDAPExtendedRequest(fallback=berdecoder)
         )
+        if not (1 <= len(vals) <= 2):
+            raise ValueError
 
-        kw = {}
-        try:
-            kw["requestValue"] = l[1].value
-        except IndexError:
-            pass
+        requestName = validate_ber(vals[0], BEROctetString)
+        if len(vals) == 2:
+            requestValue = validate_ber(vals[1], BEROctetString).value
+        else:
+            requestValue = None
 
-        r = klass(requestName=l[0].value, tag=tag, **kw)
+        r = klass(requestName=requestName.value, requestValue=requestValue, tag=tag)
         return r
 
-    def __init__(self, requestName=None, requestValue=None, tag=None):
+    def __init__(
+        self, requestName: bytes = None, requestValue: bytes = None, tag: int = None
+    ):
         LDAPProtocolRequest.__init__(self)
         BERSequence.__init__(self, [], tag=tag)
         assert requestName is not None
@@ -1636,6 +1748,7 @@ class LDAPBERDecoderContext_LDAPPasswordModifyRequest(BERDecoderContext):
 class LDAPPasswordModifyRequest(LDAPExtendedRequest):
     oid = b"1.3.6.1.4.1.4203.1.11.1"
 
+    # TODO how does this work?
     def __init__(
         self,
         requestName=None,
@@ -1696,27 +1809,32 @@ class LDAPBERDecoderContext_LDAPExtendedResponse(BERDecoderContext):
 class LDAPExtendedResponse(LDAPResult):
     tag = CLASS_APPLICATION | 0x18
 
-    responseName = None
-    response = None
+    responseName: Optional[bytes] = None
+    response: Optional[bytes] = None
 
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: BERDecoderContext = None
     ) -> "LDAPExtendedResponse":
-        l = berDecodeMultiple(
+        vals = berDecodeMultiple(
             content, LDAPBERDecoderContext_LDAPExtendedResponse(fallback=berdecoder)
         )
 
-        assert 3 <= len(l) <= 6
+        if not (3 <= len(vals) <= 6):
+            raise ValueError
+
+        resultCode = validate_ber(vals[0], BEREnumerated)
+        matchedDN = validate_ber(vals[1], BEROctetString)
+        errorMessage = validate_ber(vals[2], BEROctetString)
 
         referral = None
         responseName = None
         response = None
-        for obj in l[3:]:
+        for obj in vals[3:]:
             if isinstance(obj, LDAPResponseName):
-                responseName = obj.value
+                responseName = validate_ber(obj, LDAPResponseName).value
             elif isinstance(obj, LDAPResponse):
-                response = obj.value
+                response = validate_ber(obj, LDAPResponse).value
             elif isinstance(obj, LDAPReferral):
                 # TODO support referrals
                 # self.referral=self.data[0]
@@ -1725,9 +1843,9 @@ class LDAPExtendedResponse(LDAPResult):
                 assert False
 
         r = klass(
-            resultCode=l[0].value,
-            matchedDN=l[1].value,
-            errorMessage=l[2].value,
+            resultCode=resultCode.value,
+            matchedDN=matchedDN.value,
+            errorMessage=errorMessage.value,
             referral=referral,
             responseName=responseName,
             response=response,
@@ -1737,14 +1855,14 @@ class LDAPExtendedResponse(LDAPResult):
 
     def __init__(
         self,
-        resultCode=None,
-        matchedDN=None,
-        errorMessage=None,
+        resultCode: int = None,
+        matchedDN: bytes = None,
+        errorMessage: bytes = None,
         referral=None,
         serverSaslCreds=None,
-        responseName=None,
-        response=None,
-        tag=None,
+        responseName: Optional[bytes] = None,
+        response: Optional[bytes] = None,
+        tag: int = None,
     ):
         LDAPResult.__init__(
             self,
@@ -1809,14 +1927,14 @@ class LDAPStartTLSResponse(LDAPExtendedResponse):
 
     def __init__(
         self,
-        resultCode=None,
-        matchedDN=None,
-        errorMessage=None,
+        resultCode: int = None,
+        matchedDN: bytes = None,
+        errorMessage: bytes = None,
         referral=None,
         serverSaslCreds=None,
-        responseName=None,
-        response=None,
-        tag=None,
+        responseName: Optional[bytes] = None,
+        response: Optional[bytes] = None,
+        tag: int = None,
     ):
         LDAPExtendedResponse.__init__(
             self,

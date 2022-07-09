@@ -317,8 +317,9 @@ class BERSequence(BERStructured, UserList):
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: "BERDecoderContext" = None
     ) -> "BERSequence":
-        l = berDecodeMultiple(content, berdecoder)
-        r = klass(l, tag=tag)
+        vals = berDecodeMultiple(content, berdecoder)
+        seq = [validate_ber(val, BERBase) for val in vals]
+        r = klass(seq, tag=tag)
         return r
 
     # TODO type of value?
