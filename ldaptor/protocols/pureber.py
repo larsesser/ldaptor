@@ -254,6 +254,7 @@ class BEROctetString(BERBase):
 
 class BERNull(BERBase):
     tag = 0x05
+    value = None
 
     @classmethod
     def fromBER(
