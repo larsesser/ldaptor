@@ -2098,7 +2098,7 @@ class TestRepresentations(unittest.TestCase):
             (
                 "LDAPMatchingRuleAssertion(matchingRule=LDAPMatchingRuleAssertion_matchingRule("
                 "value=b'rule'), type=LDAPMatchingRuleAssertion_type(value=b'type'), matchValue="
-                "LDAPMatchingRuleAssertion_matchValue(value=b'value'), dnAttributes=None)"
+                "LDAPMatchingRuleAssertion_matchValue(value=b'value'), dnAttributes=LDAPMatchingRuleAssertion_dnAttributes(value=0))"
             ),
         )
         self.assertEqual(
@@ -2106,7 +2106,7 @@ class TestRepresentations(unittest.TestCase):
             (
                 "LDAPMatchingRuleAssertion(matchingRule=LDAPMatchingRuleAssertion_matchingRule("
                 "value='rule'), type=LDAPMatchingRuleAssertion_type(value='type'), matchValue="
-                "LDAPMatchingRuleAssertion_matchValue(value='value'), dnAttributes=None)"
+                "LDAPMatchingRuleAssertion_matchValue(value='value'), dnAttributes=LDAPMatchingRuleAssertion_dnAttributes(value=0))"
             ),
         )
 
@@ -2119,7 +2119,7 @@ class TestRepresentations(unittest.TestCase):
             (
                 "LDAPMatchingRuleAssertion(matchingRule=LDAPMatchingRuleAssertion_matchingRule("
                 "value=b'rule'), type=LDAPMatchingRuleAssertion_type(value=b'type'), matchValue="
-                "LDAPMatchingRuleAssertion_matchValue(value=b'value'), dnAttributes=None, tag=42)"
+                "LDAPMatchingRuleAssertion_matchValue(value=b'value'), dnAttributes=LDAPMatchingRuleAssertion_dnAttributes(value=0), tag=42)"
             ),
         )
         self.assertEqual(
@@ -2127,7 +2127,7 @@ class TestRepresentations(unittest.TestCase):
             (
                 "LDAPMatchingRuleAssertion(matchingRule=LDAPMatchingRuleAssertion_matchingRule("
                 "value='rule'), type=LDAPMatchingRuleAssertion_type(value='type'), matchValue="
-                "LDAPMatchingRuleAssertion_matchValue(value='value'), dnAttributes=None, tag=42)"
+                "LDAPMatchingRuleAssertion_matchValue(value='value'), dnAttributes=LDAPMatchingRuleAssertion_dnAttributes(value=0), tag=42)"
             ),
         )
 
