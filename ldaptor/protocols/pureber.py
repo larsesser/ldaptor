@@ -150,9 +150,14 @@ class BERBase(WireStrAlias, metaclass=abc.ABCMeta):
     def fromBER(
         cls, tag: int, content: bytes, berdecoder: "BERDecoderContext"
     ) -> "BERBase":
+        """Create an instance of this class from a binary string.
+
+        This is the default way an instance of this class will be created.
+        """
         raise NotImplementedError
 
     def toWire(self) -> bytes:
+        """Encode the instance of this class to its binary value."""
         return b""
 
 
@@ -310,6 +315,7 @@ class BERBoolean(BERBase):
             )
 
 
+# TODO use IntEnums to represent enumerates
 class BEREnumerated(BERInteger):
     tag = 0x0A
 
@@ -348,6 +354,7 @@ class BERSequence(BERStructured, UserList):
             )
 
 
+# TODO ?
 class BERSequenceOf(BERSequence):
     pass
 

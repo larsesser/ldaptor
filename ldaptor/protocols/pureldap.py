@@ -75,15 +75,42 @@ class LDAPAttributeValue(BEROctetString):
     pass
 
 
+# LDAPMessage ::= SEQUENCE {
+#      messageID       MessageID,
+#      protocolOp      CHOICE {
+#           bindRequest           BindRequest,
+#           bindResponse          BindResponse,
+#           unbindRequest         UnbindRequest,
+#           searchRequest         SearchRequest,
+#           searchResEntry        SearchResultEntry,
+#           searchResDone         SearchResultDone,
+#           searchResRef          SearchResultReference,
+#           modifyRequest         ModifyRequest,
+#           modifyResponse        ModifyResponse,
+#           addRequest            AddRequest,
+#           addResponse           AddResponse,
+#           delRequest            DelRequest,
+#           delResponse           DelResponse,
+#           modDNRequest          ModifyDNRequest,
+#           modDNResponse         ModifyDNResponse,
+#           compareRequest        CompareRequest,
+#           compareResponse       CompareResponse,
+#           abandonRequest        AbandonRequest,
+#           extendedReq           ExtendedRequest,
+#           extendedResp          ExtendedResponse,
+#           ...,
+#           intermediateResponse  IntermediateResponse },
+#      controls       [0] Controls OPTIONAL }
 class LDAPMessage(BERSequence):
     """
     To encode this object in order to be sent over the network use the toWire()
     method.
     """
 
+    # TODO rename to messageID
     id: int
     value: "LDAPProtocolOp"
-    controls: Optional["LDAPControls"]
+    controls: Optional[Tuple[bytes, Optional[bool], Optional[bytes]]]
 
     @classmethod
     def fromBER(
@@ -94,7 +121,7 @@ class LDAPMessage(BERSequence):
             raise ValueError
 
         id_ = validate_ber(vals[0], BERInteger)
-        msg = validate_ber(vals[1], LDAPProtocolOp)
+        protocolOp = validate_ber(vals[1], LDAPProtocolOp)
 
         if len(vals) > 2:
             # TODO why not use LDAPControls directly here?
@@ -111,7 +138,7 @@ class LDAPMessage(BERSequence):
         if len(vals) > 3:
             raise ValueError
 
-        r = cls(id=id_.value, value=msg, controls=controls, tag=tag)
+        r = cls(id=id_.value, value=protocolOp, controls=controls, tag=tag)
         return r
 
     def __init__(
@@ -154,11 +181,13 @@ class LDAPProtocolOp(BERBase, metaclass=abc.ABCMeta):
 
 
 class LDAPProtocolRequest(LDAPProtocolOp, metaclass=abc.ABCMeta):
+    """Base class for all Protocol Requests."""
     # TODO make this a bool?
     needs_answer = 1
 
 
 class LDAPProtocolResponse(LDAPProtocolOp, metaclass=abc.ABCMeta):
+    """Base class for all Protocol Responses."""
     pass
 
 
@@ -304,6 +333,11 @@ class LDAPBERDecoderContext_LDAPSearchResultReference(BERDecoderContext):
     }
 
 
+# SearchResultReference ::= [APPLICATION 19] SEQUENCE
+#             SIZE (1..MAX) OF uri URI
+#
+# URI ::= LDAPString     -- limited to characters permitted in
+#          -- URIs
 class LDAPSearchResultReference(LDAPProtocolResponse, BERSequence):
     tag = CLASS_APPLICATION | 0x13
     uris: List[LDAPString]
@@ -337,6 +371,58 @@ class LDAPSearchResultReference(LDAPProtocolResponse, BERSequence):
         )
 
 
+# LDAPResult ::= SEQUENCE {
+#      resultCode         ENUMERATED {
+#           success                      (0),
+#           operationsError              (1),
+#           protocolError                (2),
+#           timeLimitExceeded            (3),
+#           sizeLimitExceeded            (4),
+#           compareFalse                 (5),
+#           compareTrue                  (6),
+#           authMethodNotSupported       (7),
+#           strongerAuthRequired         (8),
+#  -- 9 reserved --
+#           referral                     (10),
+#           adminLimitExceeded           (11),
+#           unavailableCriticalExtension (12),
+#           confidentialityRequired      (13),
+#           saslBindInProgress           (14),
+#           noSuchAttribute              (16),
+#           undefinedAttributeType       (17),
+#           inappropriateMatching        (18),
+#           constraintViolation          (19),
+#           attributeOrValueExists       (20),
+#           invalidAttributeSyntax       (21),
+#  -- 22-31 unused --
+#           noSuchObject                 (32),
+#           aliasProblem                 (33),
+#           invalidDNSyntax              (34),
+#  -- 35 reserved for undefined isLeaf --
+#           aliasDereferencingProblem    (36),
+#  -- 37-47 unused --
+#           inappropriateAuthentication  (48),
+#           invalidCredentials           (49),
+#           insufficientAccessRights     (50),
+#           busy                         (51),
+#           unavailable                  (52),
+#           unwillingToPerform           (53),
+#           loopDetect                   (54),
+#  -- 55-63 unused --
+#           namingViolation              (64),
+#           objectClassViolation         (65),
+#           notAllowedOnNonLeaf          (66),
+#           notAllowedOnRDN              (67),
+#           entryAlreadyExists           (68),
+#           objectClassModsProhibited    (69),
+#  -- 70 reserved for CLDAP --
+#           affectsMultipleDSAs          (71),
+#  -- 72-79 unused --
+#           other                        (80),
+#           ...  },
+#      matchedDN          LDAPDN,
+#      diagnosticMessage  LDAPString,
+#      referral           [3] Referral OPTIONAL }
 class LDAPResult(LDAPProtocolResponse, BERSequence):
     resultCode: int
     matchedDN: bytes
@@ -355,7 +441,9 @@ class LDAPResult(LDAPProtocolResponse, BERSequence):
             raise ValueError
 
         resultCode = validate_ber(vals[0], BEREnumerated)
+        # TODO this should use LDAPDN
         matchedDN = validate_ber(vals[1], BEROctetString)
+        # TODO this should use LDAPString
         errorMessage = validate_ber(vals[2], BEROctetString)
         referral = None
         # if (l[3:] and isinstance(l[3], LDAPReferral)):
@@ -448,14 +536,12 @@ class LDAPBERDecoderContext_BindResponse(BERDecoderContext):
     }
 
 
+# BindResponse ::= [APPLICATION 1] SEQUENCE {
+#      COMPONENTS OF LDAPResult,
+#      serverSaslCreds    [7] OCTET STRING OPTIONAL }
 class LDAPBindResponse(LDAPResult):
     tag = CLASS_APPLICATION | 0x01
-
-    resultCode: int
-    matchedDN: bytes
-    errorMessage: bytes
-    referral = None
-    serverSaslCreds: bytes
+    serverSaslCreds: Optional[bytes]
 
     @classmethod
     def fromBER(
@@ -516,6 +602,7 @@ class LDAPBindResponse(LDAPResult):
         return LDAPResult.__repr__(self)
 
 
+# UnbindRequest ::= [APPLICATION 2] NULL
 class LDAPUnbindRequest(LDAPProtocolRequest, BERNull):
     tag = CLASS_APPLICATION | 0x02
     needs_answer = 0
@@ -532,10 +619,18 @@ class LDAPAttributeDescription(BEROctetString):
     pass
 
 
-class LDAPAttributeValueAssertion(BERSequence):
+# AttributeValueAssertion ::= SEQUENCE {
+#      attributeDesc   AttributeDescription,
+#      assertionValue  AssertionValue }
+#
+# AttributeDescription ::= LDAPString
+#           -- Constrained to <attributedescription>
+#           -- [RFC4512]
+#
+# AttributeValue ::= OCTET STRING
+class LDAPAttributeValueAssertion(BERSequence, LDAPString):
     attributeDesc: BEROctetString
     assertionValue: BEROctetString
-    escaper: EscaperCallable
 
     @classmethod
     def fromBER(
@@ -558,10 +653,10 @@ class LDAPAttributeValueAssertion(BERSequence):
         escaper: EscaperCallable = escape,
     ):
         BERSequence.__init__(self, value=[], tag=tag)
+        LDAPString.__init__(self, value=b"", escaper=escaper)
         assert attributeDesc is not None
         self.attributeDesc = attributeDesc
         self.assertionValue = assertionValue
-        self.escaper = escaper
 
     def toWire(self) -> bytes:
         return BERSequence(
@@ -893,6 +988,11 @@ class LDAPBERDecoderContext_MatchingRuleAssertion(BERDecoderContext):
     }
 
 
+# MatchingRuleAssertion ::= SEQUENCE {
+#      matchingRule    [1] MatchingRuleId OPTIONAL,
+#      type            [2] AttributeDescription OPTIONAL,
+#      matchValue      [3] AssertionValue,
+#      dnAttributes    [4] BOOLEAN DEFAULT FALSE }
 class LDAPMatchingRuleAssertion(BERSequence):
     # TODO this class stores its attributes as LDAP* objects. Maybe unify this with the
     #  other classes (in any direction)?
@@ -1033,6 +1133,29 @@ LDAP_DEREF_derefAlways = 3
 LDAPFilterMatchAll = LDAPFilter_present("objectClass")
 
 
+# AttributeSelection ::= SEQUENCE OF selector LDAPString
+#   -- The LDAPString is constrained to
+#   -- <attributeSelector> in Section 4.5.1.8
+# TODO implement
+
+
+# SearchRequest ::= [APPLICATION 3] SEQUENCE {
+#      baseObject      LDAPDN,
+#      scope           ENUMERATED {
+#           baseObject              (0),
+#           singleLevel             (1),
+#           wholeSubtree            (2),
+#           ...  },
+#      derefAliases    ENUMERATED {
+#           neverDerefAliases       (0),
+#           derefInSearching        (1),
+#           derefFindingBaseObj     (2),
+#           derefAlways             (3) },
+#      sizeLimit       INTEGER (0 ..  maxInt),
+#      timeLimit       INTEGER (0 ..  maxInt),
+#      typesOnly       BOOLEAN,
+#      filter          Filter,
+#      attributes      AttributeSelection }
 class LDAPSearchRequest(LDAPProtocolRequest, BERSequence):
     tag = CLASS_APPLICATION | 0x03
 
@@ -1167,6 +1290,16 @@ class LDAPSearchRequest(LDAPProtocolRequest, BERSequence):
             )
 
 
+# SearchResultEntry ::= [APPLICATION 4] SEQUENCE {
+#      objectName      LDAPDN,
+#      attributes      PartialAttributeList }
+#
+# PartialAttributeList ::= SEQUENCE OF
+#        partialAttribute PartialAttribute
+#
+# PartialAttribute ::= SEQUENCE {
+#      type       AttributeDescription,
+#      vals       SET OF value AttributeValue }
 class LDAPSearchResultEntry(LDAPProtocolResponse, BERSequence):
     tag = CLASS_APPLICATION | 0x04
     objectName: bytes
@@ -1235,10 +1368,12 @@ class LDAPSearchResultEntry(LDAPProtocolResponse, BERSequence):
         )
 
 
+# SearchResultDone ::= [APPLICATION 5] LDAPResult
 class LDAPSearchResultDone(LDAPResult):
     tag = CLASS_APPLICATION | 0x05
 
 
+# Controls ::= SEQUENCE OF control Control
 class LDAPControls(BERSequence):
     tag = CLASS_CONTEXT | 0x00
 
@@ -1255,6 +1390,10 @@ class LDAPControls(BERSequence):
         return r
 
 
+# Control ::= SEQUENCE {
+#      controlType             LDAPOID,
+#      criticality             BOOLEAN DEFAULT FALSE,
+#      controlValue            OCTET STRING OPTIONAL }
 class LDAPControl(BERSequence):
     controlType: bytes
     criticality: Optional[bool]
@@ -1269,6 +1408,7 @@ class LDAPControl(BERSequence):
         if not (1 <= len(vals) <= 3):
             raise ValueError
 
+        # TODO use LDAPOID instead
         controlType = validate_ber(vals[0], BEROctetString)
         criticality = None
         controlValue = None
@@ -1631,6 +1771,9 @@ class LDAPBERDecoderContext_Compare(BERDecoderContext):
     }
 
 
+# CompareRequest ::= [APPLICATION 14] SEQUENCE {
+#      entry           LDAPDN,
+#      ava             AttributeValueAssertion }
 class LDAPCompareRequest(LDAPProtocolRequest, BERSequence):
     tag = CLASS_APPLICATION | 14
 
@@ -1675,6 +1818,7 @@ class LDAPCompareRequest(LDAPProtocolRequest, BERSequence):
         return "{}({})".format(self.__class__.__name__, ", ".join(l))
 
 
+# CompareResponse ::= [APPLICATION 15] LDAPResult
 class LDAPCompareResponse(LDAPResult):
     tag = CLASS_APPLICATION | 15
 
