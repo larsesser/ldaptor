@@ -1217,7 +1217,7 @@ class Representations(unittest.TestCase):
         ldap_msg = pureldap.LDAPMessage(
             id=1, value=search_request, controls=controls, tag=1
         )
-        expected_value = "LDAPMessage(id=1, value=LDAPSearchRequest(baseObject='cn=foo,ou=baz,dc=example,dc=org', scope=2, derefAliases=0, sizeLimit=0, timeLimit=0, typesOnly=0, filter=LDAPFilter_present(value='objectClass'), attributes=[]), controls=[('1.2.840.113556.1.4.319', None, BERSequence(value=[BERInteger(value=10), BEROctetString(value='xyzzy')]))], tag=1)"
+        expected_value = "LDAPMessage(id=1, value=LDAPSearchRequest(baseObject='cn=foo,ou=baz,dc=example,dc=org', scope=2, derefAliases=0, sizeLimit=0, timeLimit=0, typesOnly=False, filter=LDAPFilter_present(value='objectClass'), attributes=[]), controls=[('1.2.840.113556.1.4.319', None, BERSequence(value=[BERInteger(value=10), BEROctetString(value='xyzzy')]))], tag=1)"
         self.assertEqual(expected_value, repr(ldap_msg))
 
 
@@ -1337,7 +1337,7 @@ class TestRepresentations(unittest.TestCase):
             ),
             (
                 "LDAPSearchRequest(baseObject=b'ou=users,dc=example,dc=org', scope=2, derefAliases=0, "
-                "sizeLimit=0, timeLimit=0, typesOnly=0, filter=LDAPFilter_equalityMatch("
+                "sizeLimit=0, timeLimit=0, typesOnly=False, filter=LDAPFilter_equalityMatch("
                 "attributeDesc=BEROctetString(value=b'key'), assertionValue=BEROctetString(value=b'value')), "
                 "attributes=[])"
             ),
@@ -1354,7 +1354,7 @@ class TestRepresentations(unittest.TestCase):
             ),
             (
                 "LDAPSearchRequest(baseObject='ou=users,dc=example,dc=org', scope=2, derefAliases=0, "
-                "sizeLimit=0, timeLimit=0, typesOnly=0, filter=LDAPFilter_equalityMatch("
+                "sizeLimit=0, timeLimit=0, typesOnly=False, filter=LDAPFilter_equalityMatch("
                 "attributeDesc=BEROctetString(value='key'), assertionValue=BEROctetString(value='value')), "
                 "attributes=[])"
             ),
@@ -1375,7 +1375,7 @@ class TestRepresentations(unittest.TestCase):
             ),
             (
                 "LDAPSearchRequest(baseObject=b'ou=users,dc=example,dc=org', scope=2, derefAliases=0, "
-                "sizeLimit=0, timeLimit=0, typesOnly=0, filter=LDAPFilter_equalityMatch("
+                "sizeLimit=0, timeLimit=0, typesOnly=False, filter=LDAPFilter_equalityMatch("
                 "attributeDesc=BEROctetString(value=b'key'), assertionValue=BEROctetString(value=b'value')), "
                 "attributes=[], tag=42)"
             ),
@@ -1393,7 +1393,7 @@ class TestRepresentations(unittest.TestCase):
             ),
             (
                 "LDAPSearchRequest(baseObject='ou=users,dc=example,dc=org', scope=2, derefAliases=0, "
-                "sizeLimit=0, timeLimit=0, typesOnly=0, filter=LDAPFilter_equalityMatch("
+                "sizeLimit=0, timeLimit=0, typesOnly=False, filter=LDAPFilter_equalityMatch("
                 "attributeDesc=BEROctetString(value='key'), assertionValue=BEROctetString(value='value')), "
                 "attributes=[], tag=42)"
             ),

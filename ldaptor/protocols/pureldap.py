@@ -873,7 +873,7 @@ class LDAPMatchingRuleAssertion(BERSequence):
     matchingRule: Optional[LDAPMatchingRuleAssertion_matchingRule]
     type: Optional[LDAPMatchingRuleAssertion_type]
     matchValue: LDAPMatchingRuleAssertion_matchValue
-    dnAttributes: Optional[LDAPMatchingRuleAssertion_dnAttributes] = None
+    dnAttributes: LDAPMatchingRuleAssertion_dnAttributes
     escaper: EscaperCallable
 
     @classmethod
@@ -883,7 +883,7 @@ class LDAPMatchingRuleAssertion(BERSequence):
         matchingRule = None
         atype = None
         matchValue = None
-        dnAttributes = None
+        dnAttributes = False
         vals = berDecodeMultiple(
             content,
             LDAPBERDecoderContext_MatchingRuleAssertion(
@@ -904,8 +904,6 @@ class LDAPMatchingRuleAssertion(BERSequence):
             dnAttributes = validate_ber(vals[3], LDAPMatchingRuleAssertion_dnAttributes)
         if matchingRule is None:
             raise ValueError
-        if not dnAttributes:
-            dnAttributes = None
         r = klass(
             matchingRule=matchingRule,
             type=atype,
@@ -921,7 +919,7 @@ class LDAPMatchingRuleAssertion(BERSequence):
         matchingRule: Union[bytes, LDAPMatchingRuleAssertion_matchingRule] = None,
         type: Union[bytes, LDAPMatchingRuleAssertion_type] = None,
         matchValue: Union[bytes, LDAPMatchingRuleAssertion_matchValue] = None,
-        dnAttributes: Union[bool, LDAPMatchingRuleAssertion_dnAttributes] = None,
+        dnAttributes: Union[bool, LDAPMatchingRuleAssertion_dnAttributes] = False,
         tag: int = None,
         escaper: EscaperCallable = escape,
     ):
@@ -943,18 +941,18 @@ class LDAPMatchingRuleAssertion(BERSequence):
         self.type = type
         self.matchValue = matchValue
         self.dnAttributes = dnAttributes
-        if not self.dnAttributes:
-            self.dnAttributes = None
         self.escaper = escaper
 
     def toWire(self) -> bytes:
-        return BERSequence(
-            filter(
-                lambda x: x is not None,
-                [self.matchingRule, self.type, self.matchValue, self.dnAttributes],
-            ),
-            tag=self.tag,
-        ).toWire()
+        to_send = []
+        if self.matchingRule is not None:
+            to_send.append(self.matchingRule)
+        if self.type is not None:
+            to_send.append(self.type)
+        to_send.append(self.matchValue)
+        if self.dnAttributes.value is True:
+            to_send.append(self.dnAttributes)
+        return BERSequence(to_send, tag=self.tag).toWire()
 
     def __repr__(self):
         l = []
@@ -1017,8 +1015,7 @@ class LDAPSearchRequest(LDAPProtocolRequest, BERSequence):
     derefAliases = LDAP_DEREF_neverDerefAliases
     sizeLimit = 0
     timeLimit = 0
-    # TODO change to bool?
-    typesOnly = 0
+    typesOnly = False
     filter = LDAPFilterMatchAll
     attributes: List[bytes] = []  # TODO AttributeDescriptionList
 
@@ -1064,8 +1061,8 @@ class LDAPSearchRequest(LDAPProtocolRequest, BERSequence):
         derefAliases: int = None,
         sizeLimit: int = None,
         timeLimit: int = None,
-        typesOnly: int = None,
-        filter: AbstractLDAPFilter = None,
+        typesOnly: bool = None,
+        filter: LDAPFilter = None,
         attributes: List[bytes] = None,
         tag: int = None,
     ):

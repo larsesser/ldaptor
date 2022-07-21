@@ -270,30 +270,31 @@ class BERNull(BERBase):
 
 class BERBoolean(BERBase):
     tag = 0x01
+    value: bool
 
     @classmethod
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: "BERDecoderContext"
     ) -> "BERBoolean":
-        assert len(content) > 0
+        if len(content) <= 0:
+            raise ValueError
         value = ber2int(content)
-        r = klass(value=value, tag=tag)
+        r = klass(value=bool(value), tag=tag)
         return r
 
-    # TODO make value a boolean?
-    def __init__(self, value: int, tag: int = None):
+    def __init__(self, value: bool, tag: int = None):
         """Create a new BERInteger object.
         value is an integer.
         """
         BERBase.__init__(self, tag)
-        assert value is not None
-        if value:
-            value = 0xFF
+        if value is None:
+            raise ValueError
+        # TODO convert value to bool
         self.value = value
 
     def toWire(self) -> bytes:
-        assert self.value == 0 or self.value == 0xFF
-        return bytes((self.identification(),)) + int2berlen(1) + bytes((self.value,))
+        value = 0xFF if self.value else 0
+        return bytes((self.identification(),)) + int2berlen(1) + bytes((value,))
 
     def __repr__(self):
         if self.tag == self.__class__.tag:
