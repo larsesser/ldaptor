@@ -1028,7 +1028,7 @@ class LDAPMatchingRuleAssertion(BERSequence):
             vals[3], LDAPMatchingRuleAssertion_dnAttributes
         ):
             dnAttributes = validate_ber(vals[3], LDAPMatchingRuleAssertion_dnAttributes)
-        if matchingRule is None:
+        if matchValue is None:
             raise ValueError
         r = klass(
             matchingRule=matchingRule,
