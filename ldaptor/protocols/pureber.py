@@ -183,7 +183,8 @@ class BERInteger(BERBase):
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: "BERDecoderContext"
     ) -> "BERInteger":
-        assert len(content) > 0
+        if len(content) <= 0:
+            raise ValueError
         value = ber2int(content)
         r = klass(value=value, tag=tag)
         return r
@@ -193,7 +194,8 @@ class BERInteger(BERBase):
         value is an integer.
         """
         BERBase.__init__(self, tag)
-        assert value is not None
+        if value is None:
+            raise ValueError
         self.value = value
 
     def toWire(self) -> bytes:
@@ -222,10 +224,11 @@ class BEROctetString(BERBase):
         r = klass(value=content, tag=tag)
         return r
 
-    # TODO type of value?
     def __init__(self, value: bytes, tag: int = None):
         BERBase.__init__(self, tag)
-        assert value is not None
+        if value is None:
+            raise ValueError
+        # TODO convert to bytes!
         self.value = value
 
     def toWire(self) -> bytes:
@@ -251,7 +254,8 @@ class BERNull(BERBase):
     def fromBER(
         klass, tag: int, content: bytes, berdecoder: "BERDecoderContext"
     ) -> "BERNull":
-        assert len(content) == 0
+        if len(content) != 0:
+            raise ValueError
         r = klass(tag=tag)
         return r
 
@@ -326,7 +330,8 @@ class BERSequence(BERStructured, UserList):
     # TODO type of value?
     def __init__(self, value: Iterable[BERBase], tag: int = None):
         BERStructured.__init__(self, tag)
-        assert value is not None
+        if value is None:
+            raise ValueError
         UserList.__init__(self, value)
 
     def toWire(self) -> bytes:

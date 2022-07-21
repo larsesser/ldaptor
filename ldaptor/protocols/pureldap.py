@@ -90,6 +90,8 @@ class LDAPMessage(BERSequence):
         cls, tag: int, content: bytes, berdecoder: BERDecoderContext
     ) -> "LDAPMessage":
         vals = berDecodeMultiple(content, berdecoder)
+        if not (2 <= len(vals) <= 3):
+            raise ValueError
 
         id_ = validate_ber(vals[0], BERInteger)
         msg = validate_ber(vals[1], LDAPProtocolOp)
@@ -120,7 +122,8 @@ class LDAPMessage(BERSequence):
         tag: int = None,
     ):
         BERSequence.__init__(self, value=[], tag=tag)
-        assert value is not None
+        if value is None:
+            raise ValueError
         if id is None:
             id = alloc_ldap_message_id()
         self.id = id
@@ -1059,9 +1062,13 @@ class LDAPSearchRequest(LDAPProtocolRequest, BERSequence):
         scope = validate_ber(vals[1], BEREnumerated)
         derefAliases = validate_ber(vals[2], BEREnumerated)
         sizeLimit = validate_ber(vals[3], BERInteger)
+        if sizeLimit.value < 0:
+            raise ValueError
         timeLimit = validate_ber(vals[4], BERInteger)
+        if timeLimit.value < 0:
+            raise ValueError
         typesOnly = validate_ber(vals[5], BERBoolean)
-        filter_ = validate_ber(vals[6], AbstractLDAPFilter)
+        filter_ = validate_ber(vals[6], LDAPFilter)
         attributes = validate_ber(vals[7], BERSequence)
 
         r = klass(
@@ -1292,7 +1299,8 @@ class LDAPControl(BERSequence):
         tag: int = None,
     ):
         BERSequence.__init__(self, value=[], tag=tag)
-        assert controlType is not None
+        if controlType is None:
+            raise ValueError
         self.controlType = controlType
         self.criticality = criticality
         self.controlValue = controlValue
