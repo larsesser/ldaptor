@@ -166,6 +166,20 @@ class LDAPBERDecoderContext_LDAPBindRequest(BERDecoderContext):
     }
 
 
+# BindRequest ::= [APPLICATION 0] SEQUENCE {
+#      version                 INTEGER (1 ..  127),
+#      name                    LDAPDN,
+#      authentication          AuthenticationChoice }
+#
+# AuthenticationChoice ::= CHOICE {
+#      simple                  [0] OCTET STRING,
+#                -- 1 and 2 reserved
+#      sasl                    [3] SaslCredentials,
+#      ...  }
+#
+# SaslCredentials ::= SEQUENCE {
+#      mechanism               LDAPString,
+#      credentials             OCTET STRING OPTIONAL }
 class LDAPBindRequest(LDAPProtocolRequest, BERSequence):
     tag = CLASS_APPLICATION | 0x00
     version: int
@@ -180,14 +194,18 @@ class LDAPBindRequest(LDAPProtocolRequest, BERSequence):
         vals = berDecodeMultiple(
             content, LDAPBERDecoderContext_LDAPBindRequest(fallback=berdecoder)
         )
-        version = validate_ber(vals[0], BERInteger)
-        dn = validate_ber(vals[1], BEROctetString)
-        raw_auth = vals[2]
+        if len(vals) != 3:
+            raise ValueError
 
-        auth: Optional[Union[bytes, Tuple[bytes, Optional[bytes]]]]
-        sasl = False
+        version = validate_ber(vals[0], BERInteger)
+        # TODO should use LDAPDN
+        dn = validate_ber(vals[1], BEROctetString)
+        raw_auth: Union[BEROctetString, BERSequence] = vals[2]  # type: ignore[assignment]
+
+        auth: Union[bytes, Tuple[bytes, Optional[bytes]]]
         if isinstance(raw_auth, BEROctetString):
             auth = raw_auth.value
+            sasl = False
         elif isinstance(raw_auth, BERSequence):
             mechanism = validate_ber(raw_auth[0], BEROctetString)
             # per https://ldap.com/ldapv3-wire-protocol-reference-bind/
@@ -199,7 +217,7 @@ class LDAPBindRequest(LDAPProtocolRequest, BERSequence):
                 auth = (mechanism.value, None)
             sasl = True
         else:
-            auth = None
+            raise ValueError
 
         r = klass(version=version.value, dn=dn.value, auth=auth, tag=tag, sasl=sasl)
         return r
@@ -229,6 +247,10 @@ class LDAPBindRequest(LDAPProtocolRequest, BERSequence):
             auth = ""
             assert not sasl
         self.auth = auth
+        # check that the sasl toggle is set iff the auth param is a sasl sequence
+        if not ((not sasl and isinstance(auth, (bytes, str))) or
+                (sasl and isinstance(auth, tuple))):
+            raise ValueError(sasl, auth)
         self.sasl = sasl
 
     def toWire(self) -> bytes:
@@ -236,6 +258,7 @@ class LDAPBindRequest(LDAPProtocolRequest, BERSequence):
         if not self.sasl:
             auth_ber = BEROctetString(self.auth, tag=CLASS_CONTEXT | 0)
         else:
+            assert isinstance(self.auth, tuple)
             # since the credentails for SASL is optional must check first
             # if credentials are None don't send them.
             if self.auth[1]:
