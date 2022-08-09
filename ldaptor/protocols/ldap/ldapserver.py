@@ -18,28 +18,19 @@ class BaseLDAPServer(protocol.Protocol):
         self.buffer = b""
         self.connected = None
 
-    berdecoder = pureldap.LDAPBERDecoderContext_TopLevel(
-        inherit=pureldap.LDAPBERDecoderContext_LDAPMessage(
-            fallback=pureldap.LDAPBERDecoderContext(
-                fallback=pureber.BERDecoderContext()
-            ),
-            inherit=pureldap.LDAPBERDecoderContext(
-                fallback=pureber.BERDecoderContext()
-            ),
-        )
-    )
-
     def dataReceived(self, recd):
         self.buffer += recd
         while 1:
             try:
-                o, bytes = pureber.berDecodeObject(self.berdecoder, self.buffer)
+                msg, bytes_used = pureber.berUnwrap(self.buffer)
             except pureber.BERExceptionInsufficientData:
-                o, bytes = None, 0
-            self.buffer = self.buffer[bytes:]
-            if o is None:
+                msg, bytes_used = None, 0
+            self.buffer = self.buffer[bytes_used:]
+            if msg is None:
                 break
-            self.handle(o)
+            msg_tag, msg_content = msg
+            assert msg_tag == pureldap.LDAPMessage.tag
+            self.handle(pureldap.LDAPMessage.fromBER(msg_content))
 
     def connectionMade(self):
         """TCP connection has opened"""
@@ -52,7 +43,7 @@ class BaseLDAPServer(protocol.Protocol):
     def queue(self, id, op):
         if not self.connected:
             raise LDAPServerConnectionLostException()
-        msg = pureldap.LDAPMessage(op, id=id)
+        msg = pureldap.LDAPMessage(op, msg_id=id)
         if self.debug:
             log.msg("S->C %s" % repr(msg), debug=True)
         self.transport.write(msg.toWire())
@@ -107,26 +98,26 @@ class BaseLDAPServer(protocol.Protocol):
             errorMessage=reason.getErrorMessage(),
         )
 
-    def handle(self, msg):
-        assert isinstance(msg.value, pureldap.LDAPProtocolRequest)
+    def handle(self, msg: pureldap.LDAPMessage):
+        assert isinstance(msg.operation, pureldap.LDAPProtocolRequest)
         if self.debug:
             log.msg("S<-C %s" % repr(msg), debug=True)
 
-        if msg.id == 0:
-            self.unsolicitedNotification(msg.value)
+        if msg.msg_id == 0:
+            self.unsolicitedNotification(msg.operation)
         else:
-            name = msg.value.__class__.__name__
+            name = msg.operation.__class__.__name__
             handler = getattr(self, "handle_" + name, self.handleUnknown)
             d = defer.maybeDeferred(
                 handler,
-                msg.value,
+                msg.operation,
                 msg.controls,
-                lambda response: self._cbHandle(response, msg.id),
+                lambda response: self._cbHandle(response, msg.msg_id),
             )
             d.addErrback(self._cbLDAPError, name)
             d.addErrback(defer.logError)
             d.addErrback(self._cbOtherError, name)
-            d.addCallback(self._cbHandle, msg.id)
+            d.addCallback(self._cbHandle, msg.msg_id)
 
 
 class LDAPServer(BaseLDAPServer):
